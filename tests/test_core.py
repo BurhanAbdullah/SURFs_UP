@@ -76,6 +76,26 @@ def test_generated_code_is_valid_python():
     assert "nlon=128" in code
     assert "v_max=3000.0 * (u.km/u.s)" in code
     assert "track_cmes=False" in code
+    assert "dt_scale=4.0" in code
+    assert "s.solve_chunked(model, [], chunk_simtime=3.0*u.day)" in code
+
+
+def test_generated_code_uses_configured_dt_scale():
+    simulation = request()
+    simulation.model["dt_scale"] = 2.5
+
+    code = build_uniform_boundary_code(simulation)
+
+    assert "dt_scale=2.5" in code
+
+
+def test_generated_code_uses_configured_chunk_size():
+    simulation = request()
+    simulation.model["chunk_size_days"] = 1.5
+
+    code = build_uniform_boundary_code(simulation)
+
+    assert "chunk_simtime=1.5*u.day" in code
 
 
 def test_generated_code_can_enable_cme_front_tracking():
@@ -113,6 +133,22 @@ model.solve()
 
     assert result.success
     assert result.output.splitlines() == ["prepared", "running", "solved"]
+
+
+def test_runner_reports_immediately_before_chunked_solve():
+    code = """
+class Solver:
+    def solve_chunked(self, model, cmes, chunk_simtime):
+        print("solved in chunks")
+s = Solver()
+model = object()
+s.solve_chunked(model, [], chunk_simtime=3)
+"""
+
+    result = run_generated_code(code, before_solve=lambda: print("running"))
+
+    assert result.success
+    assert result.output.splitlines() == ["running", "solved in chunks"]
 
 
 def test_invalid_radial_bounds_are_rejected():
@@ -198,7 +234,7 @@ def test_general_generator_supports_cmes():
 
     compile(code, "<generated>", "exec")
     assert "s.ConeCME" in code
-    assert "model.solve(cme_list" in code
+    assert "s.solve_chunked(model, cme_list, chunk_simtime=3.0*u.day" in code
 
 
 def test_generated_preview_fetches_donki_at_runtime_when_no_list_is_loaded():
@@ -344,7 +380,7 @@ def test_generated_code_uses_stereo_a_forecast_wrapper_and_longitude_range():
         "dr=1.5*u.solRad",
         "nlon=128",
         "v_max=3000.0*(u.km/u.s)",
-        "dt_scale=4",
+        "dt_scale=4.0",
         "solver=solver",
         "gamma=gamma",
         "run_2d=True",
@@ -480,4 +516,4 @@ def test_grab_donki_at_run_start_uses_runtime_query_and_discards_editor_list():
     assert "sin.get_DONKI_cme_list" in code
     assert "cme_0 = s.ConeCME(" not in code
     assert "cme_list.append(cme_0)" not in code
-    assert "model.solve(cme_list" in code
+    assert "s.solve_chunked(model, cme_list, chunk_simtime=3.0*u.day" in code

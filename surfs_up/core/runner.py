@@ -21,19 +21,28 @@ class RunResult:
 
 
 class _BeforeModelSolve(ast.NodeTransformer):
-    """Insert a progress callback immediately before ``model.solve(...)``."""
+    """Insert a progress callback immediately before a SURF solve call."""
 
     @staticmethod
     def _is_model_solve(statement: ast.stmt) -> bool:
         if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
             return False
         function = statement.value.func
-        return (
+        direct_solve = (
             isinstance(function, ast.Attribute)
             and function.attr == "solve"
             and isinstance(function.value, ast.Name)
             and function.value.id == "model"
         )
+        chunked_solve = (
+            isinstance(function, ast.Attribute)
+            and function.attr == "solve_chunked"
+            and any(
+                isinstance(argument, ast.Name) and argument.id == "model"
+                for argument in statement.value.args[:1]
+            )
+        )
+        return direct_solve or chunked_solve
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
         statements: list[ast.stmt] = []

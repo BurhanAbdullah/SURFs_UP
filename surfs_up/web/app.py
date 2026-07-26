@@ -844,7 +844,7 @@ def _request_from_form() -> SimulationRequest:
         and abs(_float("rmin", 21.5) - 21.5) <= 1.0e-9
     )
     if grab_donki_at_run_start:
-        # The generated script performs the DONKI request immediately before solve().
+        # The generated script performs the DONKI request immediately before solving.
         # Discard the editor list so checked means replace, not merge.
         cmes = []
     cone_file = request.files.get("cone_file")
@@ -896,6 +896,8 @@ def _request_from_form() -> SimulationRequest:
             "dr_rs": _float("dr_rs", 1.5),
             "nlon": int(_float("nlon", 128)),
             "vmax_kms": _float("vmax_kms", 3000.0),
+            "dt_scale": _float("dt_scale", 4.0),
+            "chunk_size_days": _float("chunk_size_days", 3.0),
             "gamma": _float("gamma", 1.5),
             "start_datetime": start.replace("T", " "),
             "cr_num": int(_float("cr_num", 2300)),
