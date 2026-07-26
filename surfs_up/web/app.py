@@ -877,6 +877,7 @@ def _request_from_form() -> SimulationRequest:
                     "cme_temperature_k": np.nan,
                 }
             )
+    simtime_days = _float("simtime_days", 10.0)
     return SimulationRequest.from_mappings(
         {
             "solver": request.form.get("solver", "huxt"),
@@ -892,11 +893,13 @@ def _request_from_form() -> SimulationRequest:
             "grab_donki_at_run_start": grab_donki_at_run_start,
             "streak_lines_enabled": "streak_lines_enabled" in request.form,
             "streak_spacing_deg": _float("streak_spacing_deg", 10.0),
-            "simtime_days": _float("simtime_days", 10.0),
+            "simtime_days": simtime_days,
             "dr_rs": _float("dr_rs", 1.5),
             "nlon": int(_float("nlon", 128)),
             "vmax_kms": _float("vmax_kms", 3000.0),
-            "dt_scale": _float("dt_scale", 4.0),
+            "dt_scale": _float(
+                "dt_scale", max(1, round(4.0 * simtime_days / 10.0))
+            ),
             "chunk_size_days": _float("chunk_size_days", 3.0),
             "gamma": _float("gamma", 1.5),
             "start_datetime": start.replace("T", " "),

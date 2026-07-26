@@ -76,17 +76,17 @@ def test_generated_code_is_valid_python():
     assert "nlon=128" in code
     assert "v_max=3000.0 * (u.km/u.s)" in code
     assert "track_cmes=False" in code
-    assert "dt_scale=4.0" in code
+    assert "dt_scale=2" in code
     assert "s.solve_chunked(model, [], chunk_simtime=3.0*u.day)" in code
 
 
 def test_generated_code_uses_configured_dt_scale():
     simulation = request()
-    simulation.model["dt_scale"] = 2.5
+    simulation.model["dt_scale"] = 3
 
     code = build_uniform_boundary_code(simulation)
 
-    assert "dt_scale=2.5" in code
+    assert "dt_scale=3" in code
 
 
 def test_generated_code_uses_configured_chunk_size():
@@ -380,7 +380,7 @@ def test_generated_code_uses_stereo_a_forecast_wrapper_and_longitude_range():
         "dr=1.5*u.solRad",
         "nlon=128",
         "v_max=3000.0*(u.km/u.s)",
-        "dt_scale=4.0",
+        "dt_scale=2",
         "solver=solver",
         "gamma=gamma",
         "run_2d=True",

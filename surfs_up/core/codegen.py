@@ -5,6 +5,12 @@ from __future__ import annotations
 from .models import SimulationRequest
 
 
+def _dt_scale(state: dict) -> int:
+    """Return the explicit time-step scale or its run-length-based default."""
+    default = max(1, round(4.0 * float(state["simtime_days"]) / 10.0))
+    return int(state.get("dt_scale", default))
+
+
 def _omni_icme_list(state: dict, ambient: dict) -> str | None:
     """Return the selected ICME catalogue, including a date-based legacy default."""
     if "icme_list" in ambient:
@@ -78,7 +84,7 @@ def build_uniform_boundary_code(request: SimulationRequest) -> str:
             f"    frame={state.get('frame', 'synodic')!r},",
             f"    simtime={float(state['simtime_days'])} * u.day,",
         f"    solver={solver!r},",
-        f"    dt_scale={float(state.get('dt_scale', 4.0))},",
+        f"    dt_scale={_dt_scale(state)},",
         f"    track_cmes={bool(state.get('track_cmes', False))},",
         ")",
         ]
@@ -287,7 +293,7 @@ def build_generated_code(request: SimulationRequest) -> str:
                     f"dr={float(state.get('dr_rs', 1.5))}*u.solRad, "
                     f"nlon={int(state.get('nlon', 128))}, "
                     f"v_max={float(state.get('vmax_kms', 3000.0))}*(u.km/u.s), "
-                    f"dt_scale={float(state.get('dt_scale', 4.0))}, solver=solver, gamma=gamma, "
+                    f"dt_scale={_dt_scale(state)}, solver=solver, gamma=gamma, "
                     f"run_2d={not state.get('is_1d', False)}, "
                     f"track_cmes={bool(state.get('track_cmes', False))}, "
                     f"include_b_boundary={include_bpol}"
@@ -334,7 +340,7 @@ def build_generated_code(request: SimulationRequest) -> str:
                     f"dr={float(state.get('dr_rs', 1.5))}*u.solRad, "
                     f"nlon={int(state.get('nlon', 128))}, "
                     f"v_max={float(state.get('vmax_kms', 3000.0))}*(u.km/u.s), "
-                    f"dt_scale={float(state.get('dt_scale', 4.0))}, solver=solver, gamma=gamma, "
+                    f"dt_scale={_dt_scale(state)}, solver=solver, gamma=gamma, "
                     f"run_2d={not state.get('is_1d', False)}, "
                     f"track_cmes={bool(state.get('track_cmes', False))}, "
                     f"include_b_boundary={include_bpol}"
@@ -351,7 +357,7 @@ def build_generated_code(request: SimulationRequest) -> str:
                     f"dr={float(state.get('dr_rs', 1.5))}*u.solRad, "
                     f"nlon={int(state.get('nlon', 128))}, "
                     f"v_max={float(state.get('vmax_kms', 3000.0))}*(u.km/u.s), "
-                    f"dt_scale={float(state.get('dt_scale', 4.0))}, latitude=latitude, solver=solver, gamma=gamma, "
+                    f"dt_scale={_dt_scale(state)}, latitude=latitude, solver=solver, gamma=gamma, "
                     f"track_cmes={bool(state.get('track_cmes', False))}"
                     + geometry
                     + (", bgrid_Carr=bcarr" if include_bpol else "")
@@ -380,7 +386,7 @@ def build_generated_code(request: SimulationRequest) -> str:
             "latitude=latitude",
             f"frame={state.get('frame', 'synodic')!r}",
             "simtime=simtime",
-            f"dt_scale={float(state.get('dt_scale', 4.0))}",
+            f"dt_scale={_dt_scale(state)}",
             "solver=solver",
             f"track_cmes={bool(state.get('track_cmes', False))}",
         ]

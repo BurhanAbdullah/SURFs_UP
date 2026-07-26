@@ -266,7 +266,7 @@
         </div>
         <div class="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[auto_1fr_auto_1fr_auto_1fr]">
           <span class="pb-2 text-sm font-medium text-slate-600">dt scale</span>
-          <label><span class="sr-only">Time-step scale</span><input name="dt_scale" type="number" min="0.01" step="0.1" value="4"></label>
+          <label><span class="sr-only">Time-step scale</span><input name="dt_scale" type="number" min="1" step="1" value="4" data-auto-default="true"></label>
           <span class="pb-2 text-sm font-medium text-slate-600">Chunk size (days)</span>
           <label><span class="sr-only">Solve chunk size in days</span><input name="chunk_size_days" type="number" min="0.01" step="0.1" value="3"></label>
           <div class="contents" id="model-gamma-row">
@@ -2140,7 +2140,18 @@
       });
     }
 
-    document.querySelector('[name="simtime_days"]').addEventListener("change", () => {
+    const simtimeInput = document.querySelector('[name="simtime_days"]');
+    const dtScaleInput = document.querySelector('[name="dt_scale"]');
+    dtScaleInput.addEventListener("input", () => {
+      dtScaleInput.dataset.autoDefault = "false";
+    });
+    simtimeInput.addEventListener("change", () => {
+      if (dtScaleInput.dataset.autoDefault === "true") {
+        const runDays = Number(simtimeInput.value);
+        if (Number.isFinite(runDays) && runDays > 0) {
+          dtScaleInput.value = String(Math.max(1, Math.round(4 * runDays / 10)));
+        }
+      }
       clearStaleDonkiCmes();
       renderCmes();
     });

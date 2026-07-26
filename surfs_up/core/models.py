@@ -54,8 +54,11 @@ class SimulationRequest:
             raise ValueError("Longitude grid size must be positive.")
         if float(self.model.get("vmax_kms", 3000.0)) <= 0:
             raise ValueError("Maximum grid speed must be positive.")
-        if float(self.model.get("dt_scale", 4.0)) <= 0:
+        dt_scale = float(self.model.get("dt_scale", 4))
+        if dt_scale <= 0:
             raise ValueError("Time-step scale must be positive.")
+        if not dt_scale.is_integer():
+            raise ValueError("Time-step scale must be an integer.")
         if float(self.model.get("chunk_size_days", 3.0)) <= 0:
             raise ValueError("Solve chunk size must be positive.")
         if not -90 <= float(self.model["latitude"]) <= 90:
