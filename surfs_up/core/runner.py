@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
@@ -18,6 +19,23 @@ class RunResult:
     message: str
     output: str
     model: Any = None
+
+
+class _ProgressOutput(StringIO):
+    """Capture output and report SURF's structured chunk progress lines."""
+
+    _CHUNK_LINE = re.compile(r"\bchunk\s+(\d+)/(\d+):")
+
+    def __init__(self, on_chunk: Callable[[int, int], None] | None = None) -> None:
+        super().__init__()
+        self._on_chunk = on_chunk
+
+    def write(self, text: str) -> int:
+        written = super().write(text)
+        if self._on_chunk:
+            for match in self._CHUNK_LINE.finditer(text):
+                self._on_chunk(int(match.group(1)), int(match.group(2)))
+        return written
 
 
 class _BeforeModelSolve(ast.NodeTransformer):
@@ -65,9 +83,10 @@ class _BeforeModelSolve(ast.NodeTransformer):
 def run_generated_code(
     code_text: str,
     before_solve: Callable[[], None] | None = None,
+    on_chunk: Callable[[int, int], None] | None = None,
 ) -> RunResult:
     """Execute generated SURF code and capture its model and terminal output."""
-    output_stream = StringIO()
+    output_stream = _ProgressOutput(on_chunk)
     try:
         namespace: dict[str, Any] = {"__surf_before_solve__": before_solve or (lambda: None)}
         syntax_tree = ast.parse(code_text, filename="<generated-surf-script>")

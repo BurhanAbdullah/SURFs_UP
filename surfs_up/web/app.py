@@ -6,6 +6,7 @@ import datetime
 import inspect
 import io
 import json
+import logging
 import math
 import os
 import pickle
@@ -37,6 +38,13 @@ _RUNS_LOCK = threading.Lock()
 _RUN_PROGRESS: OrderedDict[str, str] = OrderedDict()
 _RUN_PROGRESS_LOCK = threading.Lock()
 _PLOT_LOCK = threading.Lock()
+
+
+class _ProgressPollLogFilter(logging.Filter):
+    """Hide high-frequency progress polling from the development-server log."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return '"GET /run-progress/' not in record.getMessage()
 
 
 class DonkiAccessError(RuntimeError):
@@ -900,6 +908,7 @@ def _request_from_form() -> SimulationRequest:
             "dt_scale": _float(
                 "dt_scale", max(1, round(4.0 * simtime_days / 10.0))
             ),
+            "chunked_solve": "chunked_solve" in request.form,
             "chunk_size_days": _float("chunk_size_days", 3.0),
             "gamma": _float("gamma", 1.5),
             "start_datetime": start.replace("T", " "),
@@ -913,6 +922,12 @@ def _request_from_form() -> SimulationRequest:
 
 def create_app(config: dict | None = None) -> Flask:
     """Create an app suitable for local use or a PythonAnywhere WSGI file."""
+    werkzeug_logger = logging.getLogger("werkzeug")
+    if not any(
+        isinstance(log_filter, _ProgressPollLogFilter)
+        for log_filter in werkzeug_logger.filters
+    ):
+        werkzeug_logger.addFilter(_ProgressPollLogFilter())
     app = Flask(__name__)
     app.config.from_mapping(
         MAX_CONTENT_LENGTH=1_000_000,
@@ -1010,6 +1025,10 @@ def create_app(config: dict | None = None) -> Flask:
                             context["code"],
                             before_solve=lambda: _set_run_progress(
                                 progress_id, "Running SURF"
+                            ),
+                            on_chunk=lambda current, total: _set_run_progress(
+                                progress_id,
+                                f"Running SURF — chunk {current} of {total}",
                             ),
                         )
                     if context["result"].success and context["result"].model is not None:

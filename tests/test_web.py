@@ -204,6 +204,7 @@ def test_page_exposes_run_gated_workflow_and_configuration_controls():
     assert b'id="edit-selected-cme"' in response.data
     assert b'name="track_cmes" type="checkbox"' in response.data
     assert b'name="track_cmes" type="checkbox" checked' not in response.data
+    assert b'name="chunked_solve" type="checkbox" checked' in response.data
     assert b'<option value="forecast">Forecast</option>' in response.data
     assert b'id="omni-forecast-datetime"' in response.data
     assert b'name="omni_icme_list" id="omni-icme-list"' in response.data
@@ -365,8 +366,8 @@ def test_template_hides_post_run_tabs_when_run_becomes_stale():
     assert 'activateTab("model")' in template
     assert "hidePostRunTabs();" in template
     assert 'event.submitter.textContent = "Preparing run..."' in template
-    assert 'event.submitter.textContent = "Running SURF..."' in template
-    assert 'if (progress.message === "Running SURF")' in template
+    assert '"Running SURF..."' in template
+    assert 'if (progress.message.startsWith("Running SURF"))' in template
     assert 'window.setTimeout(() => {\n          if (latestRunProgress === "Grabbing and processing input data")' not in template
     assert "function resetGeneratedCodeForCurrentState()" in template
     assert "plotCodeHistory.length = 0;" in template

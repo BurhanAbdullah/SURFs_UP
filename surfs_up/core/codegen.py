@@ -93,13 +93,14 @@ def build_uniform_boundary_code(request: SimulationRequest) -> str:
         lines.extend([f"model.set_gamma({float(state.get('gamma', 1.5))})", ""])
     else:
         lines.append("")
-    lines.extend(
-        [
-            "# Solve the ambient model without any CMEs.",
-            f"s.solve_chunked(model, [], chunk_simtime={float(state.get('chunk_size_days', 3.0))}*u.day)",
-            "",
-        ]
-    )
+    lines.append("# Solve the ambient model without any CMEs.")
+    if state.get("chunked_solve", True):
+        lines.append(
+            f"s.solve_chunked(model, [], chunk_simtime={float(state.get('chunk_size_days', 3.0))}*u.day)"
+        )
+    else:
+        lines.append("model.solve([])")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -472,9 +473,12 @@ def build_generated_code(request: SimulationRequest) -> str:
             "# Evolve the model with the configured CMEs and optional streak lines.",
         ]
     )
-    lines.append(
-        f"s.solve_chunked(model, cme_list, "
-        f"chunk_simtime={float(state.get('chunk_size_days', 3.0))}*u.day, "
-        f"streak_carr={streak})"
-    )
+    if state.get("chunked_solve", True):
+        lines.append(
+            f"s.solve_chunked(model, cme_list, "
+            f"chunk_simtime={float(state.get('chunk_size_days', 3.0))}*u.day, "
+            f"streak_carr={streak})"
+        )
+    else:
+        lines.append(f"model.solve(cme_list, streak_carr={streak})")
     return "\n".join(lines) + "\n"

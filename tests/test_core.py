@@ -98,6 +98,16 @@ def test_generated_code_uses_configured_chunk_size():
     assert "chunk_simtime=1.5*u.day" in code
 
 
+def test_generated_code_can_disable_chunked_solve():
+    simulation = request()
+    simulation.model["chunked_solve"] = False
+
+    code = build_uniform_boundary_code(simulation)
+
+    assert "model.solve([])" in code
+    assert "solve_chunked" not in code
+
+
 def test_generated_code_can_enable_cme_front_tracking():
     simulation = request()
     simulation.model["track_cmes"] = True
@@ -149,6 +159,22 @@ s.solve_chunked(model, [], chunk_simtime=3)
 
     assert result.success
     assert result.output.splitlines() == ["running", "solved in chunks"]
+
+
+def test_runner_reports_each_chunk_from_solver_output():
+    code = """
+print("solve_chunked: 2 data chunk(s)")
+print("  chunk 1/2: t = 0.00 .. 3.00 d")
+print("  chunk 2/2: t = 3.00 .. 5.00 d")
+"""
+    chunks = []
+
+    result = run_generated_code(
+        code, on_chunk=lambda current, total: chunks.append((current, total))
+    )
+
+    assert result.success
+    assert chunks == [(1, 2), (2, 2)]
 
 
 def test_invalid_radial_bounds_are_rejected():
