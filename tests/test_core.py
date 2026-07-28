@@ -388,7 +388,8 @@ def test_generated_code_uses_stereo_a_forecast_wrapper_and_longitude_range():
         "mode": "forecast",
         "forecast_datetime": "2024-05-11 00:00:00",
         "spacecraft": "STEREO-A",
-        "icme_buffer_days": 3.5,
+        "pre_icme_buffer_days": 0.5,
+        "post_icme_buffer_days": 3.5,
     }
 
     code = build_generated_code(simulation)
@@ -398,8 +399,9 @@ def test_generated_code_uses_stereo_a_forecast_wrapper_and_longitude_range():
     assert "datetime.datetime.fromisoformat('2024-05-11 00:00:00')" in code
     assert "simtime=simtime, buffertime=5*u.day" in code
     assert "spacecraft=" not in code
+    assert "pre_icme_buffer=0.5, post_icme_buffer=3.5" in code
     assert "icme_list='STEREO-A'" in code
-    assert "icme_buffer=3.5*u.day" in code
+    assert "sta_input=" not in code
     for shared_parameter in (
         "rmin=rmin",
         "rmax=rmax",
@@ -408,7 +410,6 @@ def test_generated_code_uses_stereo_a_forecast_wrapper_and_longitude_range():
         "v_max=3000.0*(u.km/u.s)",
         "dt_scale=2",
         "solver=solver",
-        "gamma=gamma",
         "run_2d=True",
         "track_cmes=False",
         "include_b_boundary=False",
@@ -416,6 +417,7 @@ def test_generated_code_uses_stereo_a_forecast_wrapper_and_longitude_range():
         assert shared_parameter in code
     assert "lon_start=120.0*u.deg" in code
     assert "lon_stop=240.0*u.deg" in code
+    assert "gamma" not in code
 
 
 def test_generated_omni_forecast_does_not_pass_spacecraft_argument():
@@ -433,6 +435,22 @@ def test_generated_omni_forecast_does_not_pass_spacecraft_argument():
     assert "staSURF_forecast" not in code
 
 
+def test_generated_omni_forecast_passes_gamma_only_for_compressible_solver():
+    simulation = request()
+    simulation.model["solver"] = "hydro"
+    simulation.model["gamma"] = 1.42
+    simulation.ambient = {
+        "source": "insitu_backmapped",
+        "mode": "forecast",
+        "spacecraft": "OMNI",
+    }
+
+    code = build_generated_code(simulation)
+
+    assert "gamma = 1.42" in code
+    assert "solver=solver, gamma=gamma" in code
+
+
 def test_generated_stereo_a_reconstruction_uses_stereo_wrapper():
     simulation = request()
     simulation.ambient = {
@@ -440,18 +458,19 @@ def test_generated_stereo_a_reconstruction_uses_stereo_wrapper():
         "mode": "reconstruction",
         "spacecraft": "STEREO-A",
         "icme_list": "None",
-        "icme_buffer_days": 1.25,
+        "pre_icme_buffer_days": 0.25,
+        "post_icme_buffer_days": 1.25,
     }
 
     code = build_generated_code(simulation)
 
     assert "staSURF_reconstruction" in code
-    assert "gamma=gamma" in code
+    assert "gamma" not in code
     assert "model.set_gamma(gamma)" not in code
     assert "omni_input=" not in code
     assert "get_omni" not in code
     assert "icme_list='None'" in code
-    assert "icme_buffer=1.25*u.day" in code
+    assert "pre_icme_buffer=0.25, post_icme_buffer=1.25" in code
 
 
 def test_generated_omni_functions_follow_include_bpol_selection():
@@ -465,7 +484,7 @@ def test_generated_omni_functions_follow_include_bpol_selection():
     code = build_generated_code(simulation)
     assert "omniSURF_reconstruction" in code
     assert "include_b_boundary=True" in code
-    assert "gamma=gamma" in code
+    assert "gamma" not in code
     assert "model.set_gamma(gamma)" not in code
 
     simulation.model["include_bpol"] = False
@@ -474,7 +493,7 @@ def test_generated_omni_functions_follow_include_bpol_selection():
     code = build_generated_code(simulation)
     assert "omniSURF_1au_out" in code
     assert "include_b_boundary=False" in code
-    assert "gamma=gamma" in code
+    assert "gamma" not in code
     assert "model.set_gamma(gamma)" not in code
 
 
@@ -484,11 +503,12 @@ def test_generated_omni_functions_pass_selected_icme_list():
         "source": "insitu_backmapped",
         "mode": "forecast",
         "icme_list": "DONKI",
-        "icme_buffer_days": 2.5,
+        "pre_icme_buffer_days": 0.5,
+        "post_icme_buffer_days": 2.5,
     }
     code = build_generated_code(simulation)
     assert "icme_list='DONKI'" in code
-    assert "pre_icme_buffer=2.5, post_icme_buffer=2.5" in code
+    assert "pre_icme_buffer=0.5, post_icme_buffer=2.5" in code
     assert "omni_input=omni_input" in code
 
     simulation.ambient = {

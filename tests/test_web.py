@@ -8,6 +8,8 @@ from urllib.error import URLError
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+import os
+import time
 
 import astropy.units as u
 import numpy as np
@@ -16,6 +18,32 @@ from flask import session
 from werkzeug.exceptions import NotFound
 
 from surfs_up.web import create_app
+
+
+def test_run_cache_prunes_old_models_and_abandoned_partial_writes(
+    monkeypatch, tmp_path
+):
+    import surfs_up.web.app as web_app
+
+    monkeypatch.setattr(web_app, "_RUN_CACHE_DIR", tmp_path)
+    oldest = tmp_path / "oldest.pickle"
+    previous = tmp_path / "previous.pickle"
+    newest = tmp_path / "newest.pickle"
+    for index, path in enumerate((oldest, previous, newest)):
+        path.write_bytes(b"model")
+        os.utime(path, (index + 1, index + 1))
+    abandoned = tmp_path / "abandoned.tmp"
+    active = tmp_path / "active.tmp"
+    abandoned.write_bytes(b"partial")
+    active.write_bytes(b"partial")
+    old_time = time.time() - 2 * 60 * 60
+    os.utime(abandoned, (old_time, old_time))
+
+    web_app._prune_run_cache()
+
+    assert list(tmp_path.glob("*.pickle")) == [newest]
+    assert not abandoned.exists()
+    assert active.exists()
 
 
 def test_browser_sessions_isolate_uploads_runs_and_progress():
@@ -178,7 +206,8 @@ def test_page_exposes_run_gated_workflow_and_configuration_controls():
     assert b"busy-button" in response.data
     assert b"Grabbing and processing input data" in response.data
     assert b"Preparing run..." in response.data
-    assert b"/run-progress/" in response.data
+    assert b"job.status_url" in response.data
+    assert b'formData.set("action", "run")' in response.data
     assert b"Configuration changed. Run SURF again." in response.data
     assert b"Model Parameters" in response.data
     assert b"Advanced" in response.data
@@ -247,10 +276,17 @@ def test_template_uses_clearer_top_tabs_without_duplicate_panel_headings():
     assert '<option value="STEREO-A">STEREO-A</option>' in template
     assert '[["STEREO-A", "Jian list"], ["None", "None"]]' in template
     assert 'syncSpacecraftIcmeOptions(true)' in template
-    assert 'name="insitu_icme_buffer_days" id="insitu-icme-buffer-days"' in template
-    assert 'min="0" step="0.25" value="2"' in template
+    assert 'name="insitu_pre_icme_buffer_days" id="insitu-pre-icme-buffer-days"' in template
+    assert 'name="insitu_post_icme_buffer_days" id="insitu-post-icme-buffer-days"' in template
+    assert 'type="number" min="0" step="0.1" value="0.2"' in template
+    assert 'type="number" min="0" step="0.1" value="1"' in template
     assert 'const disabled = omniIcmeList?.value === "None"' in template
     assert 'omniIcmeList?.addEventListener("change", syncIcmeBufferState)' in template
+    default_sync = template[
+        template.index("function syncOmniIcmeDefault()"):
+        template.index("function syncSpacecraftIcmeOptions")
+    ]
+    assert default_sync.count("syncIcmeBufferState();") == 2
     assert ">Outward propagation</span>" not in template
     assert ">Model parameters</h2>" not in template
     assert ">Ambient solar wind</h2>" not in template
@@ -367,7 +403,9 @@ def test_template_hides_post_run_tabs_when_run_becomes_stale():
     assert "hidePostRunTabs();" in template
     assert 'event.submitter.textContent = "Preparing run..."' in template
     assert '"Running SURF..."' in template
-    assert 'if (progress.message.startsWith("Running SURF"))' in template
+    assert 'if (progress.message?.startsWith("Running SURF"))' in template
+    assert 'progress.state === "completed" || progress.state === "failed"' in template
+    assert "window.location.assign(progress.result_url)" in template
     assert 'window.setTimeout(() => {\n          if (latestRunProgress === "Grabbing and processing input data")' not in template
     assert "function resetGeneratedCodeForCurrentState()" in template
     assert "plotCodeHistory.length = 0;" in template

@@ -267,8 +267,8 @@
         <div class="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[auto_1fr_auto_1fr_auto_1fr]">
           <span class="pb-2 text-sm font-medium text-slate-600">dt scale</span>
           <label><span class="sr-only">Time-step scale</span><input name="dt_scale" type="number" min="1" step="1" value="4" data-auto-default="true"></label>
-          <label class="pb-2"><span><input name="chunked_solve" type="checkbox" checked> Run in chunks</span></label>
-          <label><span class="block pb-2 text-sm font-medium text-slate-600">Chunk size (days)</span><input name="chunk_size_days" type="number" min="0.01" step="0.1" value="3"></label>
+          <label class="pb-2"><span><input name="chunked_solve" type="checkbox" checked> Run in chunks (days)</span></label>
+          <label><span class="sr-only">Chunk size in days</span><input name="chunk_size_days" type="number" min="0.01" step="0.1" value="3"></label>
           <div class="contents" id="model-gamma-row">
           <span class="pb-2 text-sm font-medium text-slate-600">Gamma</span>
           <label><span class="sr-only">Adiabatic index gamma</span><input name="gamma" id="model-gamma" type="number" step="0.01" value="1.5"></label>
@@ -335,17 +335,23 @@
             <option value="DONKI">DONKI</option>
           </select>
         </label>
-        <label id="insitu-icme-buffer-label">ICME buffer (days)
-          <input name="insitu_icme_buffer_days" id="insitu-icme-buffer-days"
-                 type="number" min="0" step="0.25" value="2">
-        </label>
+        <div class="contents" id="insitu-icme-buffer-fields">
+          <label>ICME buffer before (days)
+            <input name="insitu_pre_icme_buffer_days" id="insitu-pre-icme-buffer-days"
+                   type="number" min="0" step="0.1" value="0.2">
+          </label>
+          <label>ICME buffer after (days)
+            <input name="insitu_post_icme_buffer_days" id="insitu-post-icme-buffer-days"
+                   type="number" min="0" step="0.1" value="1">
+          </label>
+        </div>
       </div>
       <div>
         <section class="product-panel active rounded-xl border border-slate-200 bg-white p-4"
                  data-inner-panel="omni-backmapped">
           <input type="radio" class="hidden" name="ambient_source_choice"
                  value="insitu_backmapped" checked>
-          <p class="mb-4 text-sm text-slate-600">Use near-Earth OMNI data to infer the inner-boundary solar wind.</p>
+          <p class="mb-4 text-sm text-slate-600">Use 1-AU data to infer the inner-boundary solar wind.</p>
           <div class="control-row">
             <label>Mode <select name="insitu_mode" id="insitu-mode">
               <option value="forecast">Forecast</option>
@@ -1797,40 +1803,68 @@
         runInProgress = true;
         const activeTab = document.querySelector("[data-tab].active")?.dataset.tab;
         if (activeTab) sessionStorage.setItem("surfs-up-active-tab", activeTab);
-        const runAction = document.createElement("input");
-        runAction.type = "hidden";
-        runAction.name = "action";
-        runAction.value = "run";
-        runForm.appendChild(runAction);
-        const progressId = crypto.randomUUID();
-        const progressInput = document.createElement("input");
-        progressInput.type = "hidden";
-        progressInput.name = "progress_id";
-        progressInput.value = progressId;
-        runForm.appendChild(progressInput);
         event.submitter.disabled = true;
         event.submitter.classList.remove("success-button");
         event.submitter.classList.add("busy-button");
         event.submitter.textContent = "Preparing run...";
         const workflowStatus = document.getElementById("workflow-status");
         workflowStatus.textContent = "Grabbing and processing input data";
-        window.setInterval(async () => {
-          try {
-            const response = await fetch(`/run-progress/${progressId}`);
-            if (response.ok) {
-              const progress = await response.json();
-              if (progress.message) {
-                workflowStatus.textContent = progress.message;
-                if (progress.message.startsWith("Running SURF")) {
+        const formData = new FormData(runForm);
+        formData.set("action", "run");
+        fetch({{ url_for("index")|tojson }}, {
+          method: "POST",
+          body: formData
+        })
+          .then(async response => {
+            const contentType = response.headers.get("content-type") || "";
+            if (!response.ok) {
+              const detail = contentType.includes("application/json")
+                ? (await response.json()).error
+                : (await response.text()).replace(/<[^>]+>/g, " ").trim();
+              throw new Error(detail || `HTTP ${response.status}`);
+            }
+            if (!contentType.includes("application/json")) {
+              throw new Error(
+                "The server returned an HTML page instead of starting a background job. " +
+                "Restart the web app with background jobs enabled."
+              );
+            }
+            return response.json();
+          })
+          .then(job => {
+            workflowStatus.textContent = "Queued for processing";
+            const poll = window.setInterval(async () => {
+              try {
+                const response = await fetch(job.status_url, {cache: "no-store"});
+                if (!response.ok) throw new Error(`Status request failed (${response.status})`);
+                const progress = await response.json();
+                if (progress.message) workflowStatus.textContent = progress.message;
+                if (progress.message?.startsWith("Running SURF")) {
                   event.submitter.textContent = progress.message === "Running SURF"
                     ? "Running SURF..."
                     : progress.message.replace("Running SURF", "Running") + "...";
                 }
+                if (progress.state === "completed" || progress.state === "failed") {
+                  window.clearInterval(poll);
+                  window.location.assign(progress.result_url);
+                }
+              } catch (error) {
+                window.clearInterval(poll);
+                runInProgress = false;
+                event.submitter.disabled = false;
+                event.submitter.classList.remove("busy-button");
+                event.submitter.textContent = "Run SURF";
+                workflowStatus.textContent = `Unable to check run: ${error.message}`;
               }
-            }
-          } catch (_) {}
-        }, 250);
-        window.setTimeout(() => HTMLFormElement.prototype.submit.call(runForm), 60);
+            }, 1000);
+          })
+          .catch(error => {
+            runInProgress = false;
+            event.submitter.disabled = false;
+            event.submitter.classList.remove("busy-button");
+            event.submitter.textContent = "Run SURF";
+            workflowStatus.textContent = `Unable to start run: ${error.message}`;
+          });
       }
     });
     const retainedConfiguration = sessionStorage.getItem("surfs-up-current-configuration");
@@ -1910,15 +1944,15 @@
       const spacecraft = document.getElementById("insitu-spacecraft")?.value;
       if (spacecraft === "STEREO-A") {
         omniIcmeList.value = "STEREO-A";
+        syncIcmeBufferState();
         return;
       }
       omniIcmeList.value = utcInputDate(modelStartInput).getUTCFullYear() >= 2026
         ? "DONKI" : "CaneRichardson";
+      syncIcmeBufferState();
     }
     function syncSpacecraftIcmeOptions(useDefault = false) {
       const spacecraft = document.getElementById("insitu-spacecraft")?.value || "OMNI";
-      const icmeBuffer = document.getElementById("insitu-icme-buffer-days");
-      const icmeBufferLabel = document.getElementById("insitu-icme-buffer-label");
       const currentValue = omniIcmeList?.value;
       const choices = spacecraft === "STEREO-A"
         ? [["STEREO-A", "Jian list"], ["None", "None"]]
@@ -1939,11 +1973,10 @@
       syncIcmeBufferState();
     }
     function syncIcmeBufferState() {
-      const icmeBuffer = document.getElementById("insitu-icme-buffer-days");
-      const icmeBufferLabel = document.getElementById("insitu-icme-buffer-label");
+      const fields = document.getElementById("insitu-icme-buffer-fields");
       const disabled = omniIcmeList?.value === "None";
-      if (icmeBuffer) icmeBuffer.disabled = disabled;
-      if (icmeBufferLabel) icmeBufferLabel.classList.toggle("opacity-50", disabled);
+      fields?.querySelectorAll("input").forEach(input => input.disabled = disabled);
+      fields?.classList.toggle("opacity-50", disabled);
     }
     function syncOmniForecastTimeState() {
       if (!omniForecastDatetime || !insituMode) return;

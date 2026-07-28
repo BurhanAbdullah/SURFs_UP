@@ -20,6 +20,7 @@ dependencies = [
 [project.scripts]
 surfs-up = "surfs_up.web.app:main"
 surfs-up-web = "surfs_up.web.app:main"
+surfs-up-worker = "surfs_up.jobs:main"
 
 [project.urls]
 Homepage = "https://github.com/University-of-Reading-Space-Science/SURFs_UP"

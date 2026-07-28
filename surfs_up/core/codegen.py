@@ -271,36 +271,50 @@ def build_generated_code(request: SimulationRequest) -> str:
             if spacecraft == "OMNI":
                 lines.extend(_raw_omni_gap_fill_lines(raw_omni_start, raw_omni_end))
                 if omni_icme_list != "None":
-                    icme_buffer_days = float(ambient.get("icme_buffer_days", 2.0))
+                    pre_icme_buffer_days = float(
+                        ambient.get("pre_icme_buffer_days", 0.2)
+                    )
+                    post_icme_buffer_days = float(
+                        ambient.get("post_icme_buffer_days", 1.0)
+                    )
                     lines.append(
                         "omni_input = sinsit.removeICMEs("
                         f"omni_input, icme_list={omni_icme_list!r}, "
-                        f"pre_icme_buffer={icme_buffer_days}, "
-                        f"post_icme_buffer={icme_buffer_days})"
+                        f"pre_icme_buffer={pre_icme_buffer_days}, "
+                        f"post_icme_buffer={post_icme_buffer_days})"
                     )
+            wrapper_icme_list = omni_icme_list
+            sta_buffer_args = ""
+            if spacecraft == "STEREO-A":
+                pre_icme_buffer_days = float(
+                    ambient.get("pre_icme_buffer_days", 0.2)
+                )
+                post_icme_buffer_days = float(
+                    ambient.get("post_icme_buffer_days", 1.0)
+                )
+                sta_buffer_args = (
+                    f", pre_icme_buffer={pre_icme_buffer_days}, "
+                    f"post_icme_buffer={post_icme_buffer_days}"
+                )
             omni_input_arg = (
                 ", omni_input=omni_input"
                 if spacecraft == "OMNI"
                 else ""
             )
-            icme_buffer_arg = (
-                f", icme_buffer={float(ambient.get('icme_buffer_days', 2.0))}*u.day"
-                if spacecraft == "STEREO-A"
-                else ""
-            )
+            gamma_arg = ", gamma=gamma" if solver != "huxt" else ""
             lines.extend(
                 [
                     f"model = sinsit.{fn}({call_start}, {second}, rmin=rmin, rmax=rmax, "
                     f"dr={float(state.get('dr_rs', 1.5))}*u.solRad, "
                     f"nlon={int(state.get('nlon', 128))}, "
                     f"v_max={float(state.get('vmax_kms', 3000.0))}*(u.km/u.s), "
-                    f"dt_scale={_dt_scale(state)}, solver=solver, gamma=gamma, "
+                    f"dt_scale={_dt_scale(state)}, solver=solver{gamma_arg}, "
                     f"run_2d={not state.get('is_1d', False)}, "
                     f"track_cmes={bool(state.get('track_cmes', False))}, "
                     f"include_b_boundary={include_bpol}"
-                    f", icme_list={omni_icme_list!r}"
-                    f"{icme_buffer_arg}"
+                    f", icme_list={wrapper_icme_list!r}"
                     f"{omni_input_arg}"
+                    f"{sta_buffer_args}"
                     f"{longitude_args})"
                 ]
             )
@@ -318,18 +332,31 @@ def build_generated_code(request: SimulationRequest) -> str:
             lines.append(
                 "end_time = start_time + datetime.timedelta(days=simtime.to_value(u.day))"
             )
-            if omni_icme_list == "None":
-                lines.extend(
-                    _raw_omni_gap_fill_lines(
-                        "start_time - datetime.timedelta(days=28)",
-                        "end_time + datetime.timedelta(days=28)",
-                    )
+            lines.extend(
+                _raw_omni_gap_fill_lines(
+                    "start_time - datetime.timedelta(days=28)",
+                    "end_time + datetime.timedelta(days=28)",
                 )
+            )
+            wrapper_icme_list = omni_icme_list
+            if omni_icme_list != "None":
+                pre_icme_buffer_days = float(
+                    ambient.get("pre_icme_buffer_days", 0.2)
+                )
+                post_icme_buffer_days = float(
+                    ambient.get("post_icme_buffer_days", 1.0)
+                )
+                lines.append(
+                    "omni_input = sinsit.removeICMEs("
+                    f"omni_input, icme_list={omni_icme_list!r}, "
+                    f"pre_icme_buffer={pre_icme_buffer_days}, "
+                    f"post_icme_buffer={post_icme_buffer_days})"
+                )
+                wrapper_icme_list = "None"
             if ambient.get("use_215_inner_boundary", True):
                 longitude_args = ""
-                omni_input_arg = (
-                    ", omni_input=omni_input" if omni_icme_list == "None" else ""
-                )
+                gamma_arg = ", gamma=gamma" if solver != "huxt" else ""
+                omni_input_arg = ", omni_input=omni_input"
                 if not state.get("is_1d", False):
                     longitude_args = (
                         f", lon_start={float(state.get('lon_min', 0))}*u.deg"
@@ -341,24 +368,26 @@ def build_generated_code(request: SimulationRequest) -> str:
                     f"dr={float(state.get('dr_rs', 1.5))}*u.solRad, "
                     f"nlon={int(state.get('nlon', 128))}, "
                     f"v_max={float(state.get('vmax_kms', 3000.0))}*(u.km/u.s), "
-                    f"dt_scale={_dt_scale(state)}, solver=solver, gamma=gamma, "
+                    f"dt_scale={_dt_scale(state)}, solver=solver{gamma_arg}, "
                     f"run_2d={not state.get('is_1d', False)}, "
                     f"track_cmes={bool(state.get('track_cmes', False))}, "
                     f"include_b_boundary={include_bpol}"
-                    f", icme_list={omni_icme_list!r}"
+                    f", icme_list={wrapper_icme_list!r}"
                     f"{omni_input_arg}"
                     f"{longitude_args})"
                 )
             else:
+                gamma_arg = ", gamma=gamma" if solver != "huxt" else ""
                 lines.extend(
                     [
-                    "time_grid, vcarr, bcarr = sinsit.generate_vCarr_from_OMNI(start_time, end_time)",
+                    "time_grid, vcarr, bcarr = sinsit.generate_vCarr_from_OMNI("
+                    "start_time, end_time, omni_input=omni_input)",
                     "model = sin.set_time_dependent_boundary("
                     f"vcarr, time_grid, start_time, simtime, r_min={omni_rmin}, r_max=rmax, "
                     f"dr={float(state.get('dr_rs', 1.5))}*u.solRad, "
                     f"nlon={int(state.get('nlon', 128))}, "
                     f"v_max={float(state.get('vmax_kms', 3000.0))}*(u.km/u.s), "
-                    f"dt_scale={_dt_scale(state)}, latitude=latitude, solver=solver, gamma=gamma, "
+                    f"dt_scale={_dt_scale(state)}, latitude=latitude, solver=solver{gamma_arg}, "
                     f"track_cmes={bool(state.get('track_cmes', False))}"
                     + geometry
                     + (", bgrid_Carr=bcarr" if include_bpol else "")

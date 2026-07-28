@@ -17,6 +17,7 @@ import time
 import uuid
 from collections import OrderedDict
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
@@ -32,6 +33,7 @@ from surfs_up.core import (
     run_generated_code,
     sample_custom_timeseries,
 )
+from surfs_up.jobs import enqueue, read_status
 
 _RUNS: OrderedDict[str, object] = OrderedDict()
 _RUNS_LOCK = threading.Lock()
@@ -50,7 +52,9 @@ class _ProgressPollLogFilter(logging.Filter):
 class DonkiAccessError(RuntimeError):
     """Raised when NASA DONKI cannot be reached for CME data."""
 _SURF_RUN_LOCK = threading.Lock()
-_MAX_RETAINED_RUNS = 8
+# Solved models can be very large. The newest one is required for plots,
+# time series, and movies; older models are superseded by the next run.
+_MAX_RETAINED_RUNS = 1
 _RUN_CACHE_DIR = Path(
     os.environ.get("SURFS_UP_RUN_CACHE_DIR", Path.home() / ".cache" / "surfs_up" / "runs")
 )
@@ -128,7 +132,7 @@ def _run_cache_path(run_id: str) -> Path:
     return _RUN_CACHE_DIR / f"{run_id}.pickle"
 
 
-def _write_run_cache(run_id: str, retained: dict[str, object]) -> None:
+def _write_run_cache(run_id: str, retained: dict[str, object]) -> bool:
     try:
         _RUN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         path = _run_cache_path(run_id)
@@ -139,11 +143,12 @@ def _write_run_cache(run_id: str, retained: dict[str, object]) -> None:
             temp_path = Path(handle.name)
         temp_path.replace(path)
         _prune_run_cache()
+        return True
     except Exception:
         # In-memory retention is still enough for local/single-worker use; a disk
         # cache is only needed when a deployment serves follow-up plot requests
         # from a different Python process.
-        pass
+        return False
 
 
 def _read_run_cache(run_id: str) -> dict[str, object] | None:
@@ -160,6 +165,16 @@ def _read_run_cache(run_id: str) -> dict[str, object] | None:
 
 
 def _prune_run_cache() -> None:
+    """Remove superseded models and abandoned partial pickle writes."""
+    if not _RUN_CACHE_DIR.exists():
+        return
+    abandoned_before = time.time() - 60 * 60
+    for path in _RUN_CACHE_DIR.glob("*.tmp"):
+        try:
+            if path.stat().st_mtime < abandoned_before:
+                path.unlink(missing_ok=True)
+        except FileNotFoundError:
+            pass
     cached_runs = sorted(
         _RUN_CACHE_DIR.glob("*.pickle"),
         key=lambda path: path.stat().st_mtime,
@@ -834,13 +849,21 @@ def _request_from_form() -> SimulationRequest:
             if requested_icme_list in allowed_icme_lists
             else ("STEREO-A" if ambient["spacecraft"] == "STEREO-A" else "None")
         )
-        icme_buffer_days = _float("insitu_icme_buffer_days", 2.0)
-        if icme_buffer_days < 0:
-            raise ValueError("ICME buffer must be zero or greater.")
-        ambient["icme_buffer_days"] = icme_buffer_days
+        pre_icme_buffer_days = _float("insitu_pre_icme_buffer_days", 0.2)
+        post_icme_buffer_days = _float("insitu_post_icme_buffer_days", 1.0)
+        if pre_icme_buffer_days < 0 or post_icme_buffer_days < 0:
+            raise ValueError("ICME buffers must be zero or greater.")
+        ambient["pre_icme_buffer_days"] = pre_icme_buffer_days
+        ambient["post_icme_buffer_days"] = post_icme_buffer_days
     elif source == "omni":
         ambient["use_215_inner_boundary"] = "use_215_inner_boundary" in request.form
         ambient["icme_list"] = request.form.get("omni_icme_list", "None")
+        pre_icme_buffer_days = _float("insitu_pre_icme_buffer_days", 0.2)
+        post_icme_buffer_days = _float("insitu_post_icme_buffer_days", 1.0)
+        if pre_icme_buffer_days < 0 or post_icme_buffer_days < 0:
+            raise ValueError("ICME buffers must be zero or greater.")
+        ambient["pre_icme_buffer_days"] = pre_icme_buffer_days
+        ambient["post_icme_buffer_days"] = post_icme_buffer_days
 
     cmes_text = request.form.get("cmes_json", "").strip()
     cmes = json.loads(cmes_text) if cmes_text else []
@@ -931,12 +954,19 @@ def create_app(config: dict | None = None) -> Flask:
     app = Flask(__name__)
     app.config.from_mapping(
         MAX_CONTENT_LENGTH=1_000_000,
+        RUN_JOBS_SYNCHRONOUS=False,
         SECRET_KEY=_secret_key(),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
     )
     if config:
         app.config.update(config)
+    if app.config["TESTING"] and (
+        config is None or "RUN_JOBS_SYNCHRONOUS" not in config
+    ):
+        app.config["RUN_JOBS_SYNCHRONOUS"] = True
+    if not app.config["TESTING"]:
+        _prune_run_cache()
 
     @app.before_request
     def establish_browser_session():
@@ -1011,6 +1041,23 @@ def create_app(config: dict | None = None) -> Flask:
             "show_movies": False,
             "show_code_dialog": False,
         }
+        requested_run_id = request.args.get("run_id", "")
+        if requested_run_id:
+            status = read_status(requested_run_id)
+            if (
+                status is None
+                or status.get("owner_session_id") != _session_id()
+                or status.get("state") not in {"completed", "failed"}
+            ):
+                abort(404, "Run not found or not yet complete.")
+            context["result"] = SimpleNamespace(
+                success=status["state"] == "completed",
+                message=status.get("message", ""),
+                output=status.get("output", ""),
+            )
+            if context["result"].success:
+                context["run_id"] = requested_run_id
+                context["show_movies"] = bool(status.get("show_movies", False))
         if request.method == "POST":
             try:
                 simulation = _request_from_form()
@@ -1018,6 +1065,14 @@ def create_app(config: dict | None = None) -> Flask:
                 action = request.form.get("action")
                 context["show_code_dialog"] = action == "preview"
                 if action == "run":
+                    if not app.config["RUN_JOBS_SYNCHRONOUS"]:
+                        job_id = enqueue(simulation, _session_id())
+                        return jsonify(
+                            {
+                                "job_id": job_id,
+                                "status_url": url_for("run_status", job_id=job_id),
+                            }
+                        ), 202
                     progress_id = request.form.get("progress_id", "")
                     _set_run_progress(progress_id, "Grabbing and processing input data")
                     with _SURF_RUN_LOCK:
@@ -1044,8 +1099,27 @@ def create_app(config: dict | None = None) -> Flask:
                 TypeError,
                 ValueError,
             ) as exc:
+                if (
+                    request.form.get("action") == "run"
+                    and not app.config["RUN_JOBS_SYNCHRONOUS"]
+                ):
+                    return jsonify({"error": str(exc)}), 400
                 context["error"] = str(exc)
         return render_template("index.html", **context, **_model_defaults())
+
+    @app.get("/runs/<job_id>/status")
+    def run_status(job_id: str):
+        """Return persistent background-job state to its submitting browser."""
+        status = read_status(job_id)
+        if status is None or status.get("owner_session_id") != _session_id():
+            abort(404)
+        response = {
+            key: status.get(key)
+            for key in ("id", "state", "message", "created_at", "updated_at")
+        }
+        if status.get("state") in {"completed", "failed"}:
+            response["result_url"] = url_for("index", run_id=job_id)
+        return jsonify(response)
 
     @app.get("/run-progress/<progress_id>")
     def run_progress(progress_id: str):
