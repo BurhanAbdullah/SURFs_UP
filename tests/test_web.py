@@ -248,6 +248,8 @@ def test_page_exposes_run_gated_workflow_and_configuration_controls():
     assert b'name="wsa_speed_reduction" type="checkbox" checked' in response.data
     assert b'name="iswa_speed_reduction" type="checkbox" checked' in response.data
     assert b'name="mas_use_map_time"' in response.data
+    assert b'if (source === "mas")' in response.data
+    assert b"applyMasMapTime().catch(console.error)" in response.data
     assert b'name="wsa_use_map_time"' in response.data
     assert b'name="cortom_use_map_time"' in response.data
     assert b'id="model-gamma-row"' in response.data

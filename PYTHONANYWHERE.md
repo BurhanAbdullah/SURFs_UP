@@ -27,14 +27,6 @@ cd /home/mathewjowens/SURFs_UP
 pip install --no-cache-dir -e .
 ```
 
-If PythonAnywhere is still on Python 3.12.8 and `SURF` requires `>=3.12.11`, patch the remote checkout before installing:
-
-```bash
-cd /home/mathewjowens/SURF
-sed -i 's/>=3.12.11/>=3.12/' pyproject.toml
-pip install --no-cache-dir -e .
-```
-
 ## PythonAnywhere web app settings
 
 Set:

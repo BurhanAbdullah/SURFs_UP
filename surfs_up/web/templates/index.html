@@ -1269,6 +1269,9 @@
       if (panelName === "user_specified_group") {
         requestAnimationFrame(drawSpeedProfile);
       }
+      if (source === "mas") {
+        applyMasMapTime().catch(console.error);
+      }
     }
     ambientTabButtons.forEach(button => {
       button.addEventListener("click", () => {
