@@ -587,6 +587,19 @@
     <section class="card tab-panel" data-panel="movies" role="tabpanel">
       {% if run_id %}
       <form class="form-grid wide" id="movies-form" onsubmit="return false">
+        <div class="grid max-w-4xl gap-4">
+          <div class="grid gap-3 sm:grid-cols-3">
+            <label>Tag<input id="movie-tag" value="gui"></label>
+            <label>Duration (s)<input id="movie-duration" type="number" min="1" max="600" value="10"></label>
+            <label>Frame rate (fps)<input id="movie-fps" type="number" min="1" max="60" value="5"></label>
+          </div>
+          <div class="flex flex-wrap items-center gap-4">
+            <label id="movie-hcs-label" class="opacity-50"><span><input id="movie-hcs" type="checkbox" checked disabled> Plot HCS</span></label>
+            <label><span><input id="movie-limit-rmax" type="checkbox"> Limit outer radius (Rs)</span></label>
+            <input class="max-w-40" aria-label="Movie outer radius in solar radii" id="movie-rmax"
+                   type="number" min="1" max="5000" value="240" step="5" disabled>
+          </div>
+        </div>
         <div class="inner-tabs" data-inner-tabs="movie-products">
           <button type="button" class="inner-tab-button active" data-inner-tab="map-movie">2D Movie</button>
           <button type="button" class="inner-tab-button" data-inner-tab="timeseries-movie">Movie with Time Series</button>
@@ -594,17 +607,6 @@
         <section class="product-panel active wide" data-inner-panel="map-movie">
           <h3 class="sr-only">Animation (sa.animate)</h3>
           <div class="grid max-w-4xl gap-4">
-            <div class="grid gap-3 sm:grid-cols-3">
-              <label>Tag<input id="movie-tag" value="gui"></label>
-              <label>Duration (s)<input id="movie-duration" type="number" min="1" max="600" value="10"></label>
-              <label>Frame rate (fps)<input id="movie-fps" type="number" min="1" max="60" value="5"></label>
-            </div>
-            <div class="flex flex-wrap items-center gap-4">
-              <label id="movie-hcs-label" class="opacity-50"><span><input id="movie-hcs" type="checkbox" checked disabled> Plot HCS</span></label>
-              <label><span><input id="movie-limit-rmax" type="checkbox"> Limit outer radius (Rs)</span></label>
-              <input class="max-w-40" aria-label="Movie outer radius in solar radii" id="movie-rmax"
-                     type="number" min="1" max="5000" value="240" step="5" disabled>
-            </div>
             <input id="movie-output" type="hidden">
             <div><button type="button" onclick="downloadMovie('map', this)">Create 2D Movie</button></div>
           </div>
@@ -612,17 +614,8 @@
         <section class="product-panel wide" data-inner-panel="timeseries-movie">
           <h3 class="sr-only">Animation with time series (sa.animate_with_ts)</h3>
           <div class="grid max-w-4xl gap-4">
-            <div class="grid gap-3 sm:grid-cols-3">
-              <label>Tag<input id="movie-ts-tag" value="gui"></label>
-              <label>Duration (s)<input id="movie-ts-duration" type="number" min="1" max="600" value="10"></label>
-              <label>Frame rate (fps)<input id="movie-ts-fps" type="number" min="1" max="60" value="5"></label>
-            </div>
             <div class="flex flex-wrap items-center gap-4">
-              <label id="movie-ts-hcs-label" class="opacity-50"><span><input id="movie-ts-hcs" type="checkbox" checked disabled> Plot HCS</span></label>
               <label><span><input id="movie-ts-omni" type="checkbox" checked> Plot OMNI</span></label>
-              <label><span><input id="movie-ts-limit-rmax" type="checkbox"> Limit outer radius (Rs)</span></label>
-              <input class="max-w-40" aria-label="Time-series movie outer radius in solar radii" id="movie-ts-rmax"
-                     type="number" min="1" max="5000" value="240" step="5" disabled>
             </div>
             <label class="grid items-center gap-3 sm:grid-cols-[6rem_1fr]">Field
               <select id="movie-ts-field"><option>P_DYN</option><option selected>V</option><option>n</option><option>T</option></select>
@@ -784,20 +777,20 @@
       }
       function downloadMovie(kind = "map", button = null) {
         const withTimeseries = kind === "timeseries";
-        const prefix = withTimeseries ? "movie-ts" : "movie";
-        const tag = document.getElementById(`${prefix}-tag`).value || "gui";
+        const tag = document.getElementById("movie-tag").value || "gui";
         const movieQuery = new URLSearchParams({
           tag,
-          duration: document.getElementById(`${prefix}-duration`).value,
-          fps: document.getElementById(`${prefix}-fps`).value,
-          plot_hcs: document.getElementById(`${prefix}-hcs`).checked ? "1" : "0",
-          plot_rmax: document.getElementById(`${prefix}-limit-rmax`).checked
-            ? document.getElementById(`${prefix}-rmax`).value : "",
+          duration: document.getElementById("movie-duration").value,
+          fps: document.getElementById("movie-fps").value,
+          plot_hcs: document.getElementById("movie-hcs").checked ? "1" : "0",
+          plot_rmax: document.getElementById("movie-limit-rmax").checked
+            ? document.getElementById("movie-rmax").value : "",
           field: document.getElementById("movie-ts-field").value,
           plot_omni: withTimeseries && document.getElementById("movie-ts-omni").checked ? "1" : "0",
           inline: "0"
         });
-        document.getElementById(`${prefix}-output`).value = `SURF_${tag}_movie.mp4`;
+        document.getElementById(withTimeseries ? "movie-ts-output" : "movie-output").value =
+          `SURF_${tag}_movie.mp4`;
         const movieStatus = document.getElementById("movie-status");
         beginTask(button, "Rendering movie...");
         movieStatus.textContent =
@@ -2196,8 +2189,7 @@
 
     [
       ["map-limit-rmax", "map-rmax"],
-      ["movie-limit-rmax", "movie-rmax"],
-      ["movie-ts-limit-rmax", "movie-ts-rmax"]
+      ["movie-limit-rmax", "movie-rmax"]
     ].forEach(([toggle, field]) => {
       const checkbox = document.getElementById(toggle);
       if (checkbox) checkbox.addEventListener("change", () => {
@@ -2291,7 +2283,7 @@
     const streakSpacing = document.querySelector('[name="streak_spacing_deg"]');
     function syncMovieHcsControls(defaultToChecked = false) {
       const available = Boolean(includeBpolToggle && includeBpolToggle.checked);
-      ["movie-hcs", "movie-ts-hcs"].forEach(id => {
+      ["movie-hcs"].forEach(id => {
         const checkbox = document.getElementById(id);
         const label = document.getElementById(`${id}-label`);
         if (!checkbox) return;
