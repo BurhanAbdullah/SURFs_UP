@@ -5,6 +5,7 @@ from __future__ import annotations
 import astropy.units as u
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 
 
@@ -22,31 +23,42 @@ def _cme_coords_at_time(cme, time_index: int):
 
 
 def format_datetime_axis_like_surf(fig, axes, times):
-    """Format a shared datetime axis with at most about seven date labels."""
+    """Format stacked datetime axes with identical ticks on every panel."""
     axes = np.atleast_1d(axes)
     starttime = times.iloc[0] if hasattr(times, "iloc") else times[0]
     endtime = times.iloc[-1] if hasattr(times, "iloc") else times[-1]
+    # Matplotlib accepts Python, Pandas, and NumPy datetime values. Normalize
+    # through its date converter so duration and year handling work for all
+    # three representations (movie frame lines use numpy.datetime64).
+    start_datetime = mdates.num2date(mdates.date2num(starttime))
+    end_datetime = mdates.num2date(mdates.date2num(endtime))
 
+    duration_days = max(
+        0.0, (end_datetime - start_datetime).total_seconds() / 86400
+    )
+    major_interval_days = (
+        max(1, int(np.ceil(duration_days / 6))) if duration_days >= 1 else None
+    )
     for axis in axes:
-        axis.set_xlim(starttime, endtime)
+        axis.set_xlim(start_datetime, end_datetime)
+        if major_interval_days is None:
+            major_locator = mdates.AutoDateLocator(minticks=3, maxticks=7)
+        else:
+            # Six intervals produce no more than about seven labels including
+            # both ends.
+            major_locator = mdates.DayLocator(interval=major_interval_days)
+        axis.xaxis.set_major_locator(major_locator)
+        axis.xaxis.set_minor_locator(
+            mdates.DayLocator(interval=1)
+            if major_interval_days is not None and major_interval_days > 1
+            else mticker.NullLocator()
+        )
+        axis.xaxis.set_major_formatter(mdates.DateFormatter("%d-%m"))
 
-    duration_days = max(0.0, (endtime - starttime).total_seconds() / 86400)
-    if duration_days >= 1:
-        # Six intervals produce no more than about seven labels including both
-        # ends: daily for a five-day run, every two days for a ten-day run.
-        major_interval_days = max(1, int(np.ceil(duration_days / 6)))
-        axes[-1].xaxis.set_major_locator(
-            mdates.DayLocator(interval=major_interval_days)
-        )
-        if major_interval_days > 1:
-            axes[-1].xaxis.set_minor_locator(mdates.DayLocator(interval=1))
-    else:
-        axes[-1].xaxis.set_major_locator(
-            mdates.AutoDateLocator(minticks=3, maxticks=7)
-        )
-    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%d-%m"))
     fig.autofmt_xdate(rotation=0, ha="center")
-    axes[-1].set_xlabel(f"DD-MM of {starttime.year}", fontsize=12, fontweight="bold")
+    axes[-1].set_xlabel(
+        f"DD-MM of {start_datetime.year}", fontsize=12, fontweight="bold"
+    )
 
     return starttime, endtime
 

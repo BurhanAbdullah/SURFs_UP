@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "astropy>=7.1.0",
+  "imageio-ffmpeg>=0.6.0",
   "matplotlib>=3.10.6",
   "numpy>=2.2.6",
   "sunpy[net,timeseries,visualization]>=7.0.1",

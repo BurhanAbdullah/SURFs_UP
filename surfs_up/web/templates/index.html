@@ -444,10 +444,27 @@
           <span><input name="grab_donki_at_run_start" type="checkbox" checked>
             Grab DONKI CMEs at run start</span>
         </label>
+        <label>DONKI feature<select name="donki_feature" id="donki-feature"><option value="LE">Leading edge (LE) (default)</option><option value="SH">Shock (SH)</option><option value="null">Unspecified / null (for early DONKI catalogue use)</option></select></label>
         <div class="grid items-center gap-3 sm:grid-cols-[auto_1fr]">
           <button type="button" id="load-donki">Grab the DONKI CMEs now</button>
           <p id="donki-status" class="text-sm text-slate-500">Uses the current model start and run duration.</p>
         </div>
+        <fieldset class="rounded-lg border border-slate-200 p-4">
+          <legend class="px-1 text-sm font-semibold text-slate-700">Defaults for DONKI and new manual CMEs</legend>
+          <div class="control-row">
+            <label>Profile type<select name="donki_profile_type" id="donki-profile"><option>square</option><option>sinusoidal</option></select></label>
+            <label>Plasma mode<select name="donki_plasma_mode" id="donki-plasma-mode"><option>Fraction of ambient</option><option>Absolute values</option></select></label>
+            <label>Density fraction<input name="donki_density_fraction" id="donki-density-fraction" type="number" value="1" step="0.1"></label>
+            <label>Temperature fraction<input name="donki_temperature_fraction" id="donki-temperature-fraction" type="number" value="1" step="0.1"></label>
+            <label>CME density (p+/cmÂ³)<input name="donki_cme_density_pcc" id="donki-density" type="number" value="{{ default_cme_density_pcc }}" step="1"></label>
+            <label>CME temperature (K)<input name="donki_cme_temperature_k" id="donki-temperature" type="number" value="{{ default_cme_temperature_k }}" step="1000"></label>
+            <label>Thickness (Rs)<input name="donki_thickness_rs" id="donki-thickness" type="number" value="0" step="0.5"></label>
+            <label>Initial height (Rs)<input name="donki_initial_height_rs" id="donki-initial-height" type="number" value="21.5" step="0.5"></label>
+            <label>Fixed duration (hours)<input name="donki_fixed_duration_hr" id="donki-duration" type="number" value="12" step="0.5"></label>
+            <label><span><input name="donki_cme_expansion" id="donki-expansion" type="checkbox"> Expansion</span></label>
+            <label><span><input name="donki_cme_fixed_duration" id="donki-fixed-duration" type="checkbox" checked> Fixed duration</span></label>
+          </div>
+        </fieldset>
         <div class="grid items-center gap-3 sm:grid-cols-[auto_1fr]">
           <button type="button" id="choose-cone-file">Load a user-supplied Cone CME list</button>
           <input name="cone_file" id="cone-file" class="hidden" type="file" accept=".in">
@@ -466,7 +483,7 @@
         <label>HEEQ longitude (deg)<input id="cme-longitude" type="number" value="0" step="1"></label>
         <label>HEEQ latitude (deg)<input id="cme-latitude" type="number" value="0" step="1"></label>
         <label>Speed (km/s)<input id="cme-speed" type="number" value="800" step="10"></label>
-        <label>Width (deg)<input id="cme-width" type="number" value="60" step="1"></label>
+        <label>Full angular width (deg)<input id="cme-width" type="number" value="60" step="1"></label>
         <label>Launch day (days after run start)<input id="cme-launch-day" type="number" value="0.5" step="0.1"></label>
         <label>Launch datetime (UTC)<input id="cme-launch-datetime" type="datetime-local"></label>
         <label>Thickness (Rs)<input id="cme-thickness" type="number" value="5" step="0.5"></label>
@@ -1554,6 +1571,28 @@
     function numberValue(id) {
       return Number(document.getElementById(id).value);
     }
+    function cmeDefaults() {
+      return {
+        thickness_rs: numberValue("donki-thickness"),
+        initial_height_rs: numberValue("donki-initial-height"),
+        cme_expansion: document.getElementById("donki-expansion").checked,
+        cme_fixed_duration: document.getElementById("donki-fixed-duration").checked,
+        fixed_duration_hr: numberValue("donki-duration"),
+        profile_type: document.getElementById("donki-profile").value,
+        plasma_mode: document.getElementById("donki-plasma-mode").value,
+        density_fraction: numberValue("donki-density-fraction"),
+        temperature_fraction: numberValue("donki-temperature-fraction"),
+        cme_density_pcc: numberValue("donki-density"),
+        cme_temperature_k: numberValue("donki-temperature")
+      };
+    }
+    function applyDefaultsToDonkiCmes() {
+      const defaults = cmeDefaults();
+      cmes.forEach(cme => {
+        if (cme.source === "donki") Object.assign(cme, defaults);
+      });
+      renderCmes();
+    }
     function renderCmes() {
       cmeJson.value = JSON.stringify(cmes);
       if (selectedCmeIndex >= cmes.length) selectedCmeIndex = -1;
@@ -1625,14 +1664,21 @@
         document.getElementById("cme-expansion").checked = Boolean(cme.cme_expansion);
         document.getElementById("cme-fixed-duration").checked = Boolean(cme.cme_fixed_duration);
       } else {
-        document.getElementById("cme-profile").value =
-          document.querySelector('[name="solver"]').value === "hydro"
-            ? "sinusoidal"
-            : "square";
-        document.getElementById("cme-density-fraction").value = "1";
-        document.getElementById("cme-temperature-fraction").value = "1";
-        document.getElementById("cme-density").value = "{{ default_cme_density_pcc }}";
-        document.getElementById("cme-temperature").value = "{{ default_cme_temperature_k }}";
+        const defaults = cmeDefaults();
+        const values = {
+          "cme-thickness": defaults.thickness_rs,
+          "cme-initial-height": defaults.initial_height_rs,
+          "cme-duration": defaults.fixed_duration_hr,
+          "cme-profile": defaults.profile_type,
+          "cme-plasma-mode": defaults.plasma_mode,
+          "cme-density-fraction": defaults.density_fraction,
+          "cme-temperature-fraction": defaults.temperature_fraction,
+          "cme-density": defaults.cme_density_pcc,
+          "cme-temperature": defaults.cme_temperature_k
+        };
+        Object.entries(values).forEach(([id, value]) => document.getElementById(id).value = value);
+        document.getElementById("cme-expansion").checked = defaults.cme_expansion;
+        document.getElementById("cme-fixed-duration").checked = defaults.cme_fixed_duration;
       }
       cmeEditor.showModal();
     }
@@ -1686,11 +1732,13 @@
         const start = document.querySelector('[name="start_datetime"]').value;
         const duration = document.querySelector('[name="simtime_days"]').value;
         const response = await fetch(
-          `{{ url_for("donki_cmes") }}?start=${encodeURIComponent(start)}&duration=${encodeURIComponent(duration)}&solver=${encodeURIComponent(document.querySelector('[name="solver"]').value)}`
+          `{{ url_for("donki_cmes") }}?start=${encodeURIComponent(start)}&duration=${encodeURIComponent(duration)}&solver=${encodeURIComponent(document.querySelector('[name="solver"]').value)}&feature=${encodeURIComponent(document.getElementById("donki-feature").value)}`
         );
         if (!response.ok) throw new Error(await response.text());
         const loaded = await response.json();
         const retained = cmes.filter(cme => cme.source !== "donki");
+        const defaults = cmeDefaults();
+        loaded.forEach(cme => Object.assign(cme, defaults));
         cmes.splice(0, cmes.length, ...retained, ...loaded);
         if (loaded.length) grabDonkiAtRunStart.checked = false;
         selectedCmeIndex = -1;
@@ -2005,18 +2053,18 @@
       syncCmeDatetimeFromDay();
       syncOmniForecastTime();
       syncOmniIcmeDefault();
-      clearStaleDonkiCmes();
+      clearCmesForStartTimeChange();
     }
-    function clearStaleDonkiCmes() {
-      const retained = cmes.filter(cme => cme.source !== "donki");
-      if (retained.length === cmes.length) return;
-      cmes.splice(0, cmes.length, ...retained);
+    function clearCmesForStartTimeChange() {
+      if (!cmes.length) return;
+      cmes.splice(0, cmes.length);
       selectedCmeIndex = -1;
       renderCmes();
       document.getElementById("donki-status").textContent =
-        "Run interval changed; reload the cone CME list from DONKI.";
+        "Model start time changed; reload or recreate the CME list.";
     }
     modelStartInput.addEventListener("change", () => {
+      clearCmesForStartTimeChange();
       syncOmniForecastTime();
       updateCoordinates({datetime: modelStartInput.value}).catch(console.error);
     });
@@ -2281,6 +2329,10 @@
     const frameSelect = document.querySelector('[name="frame"]');
     const streakToggle = document.querySelector('[name="streak_lines_enabled"]');
     const streakSpacing = document.querySelector('[name="streak_spacing_deg"]');
+    const donkiDefaultControls = document.querySelectorAll('[name^="donki_"]');
+    donkiDefaultControls.forEach(control => {
+      control.addEventListener("change", applyDefaultsToDonkiCmes);
+    });
     function syncMovieHcsControls(defaultToChecked = false) {
       const available = Boolean(includeBpolToggle && includeBpolToggle.checked);
       ["movie-hcs"].forEach(id => {
@@ -2320,7 +2372,13 @@
       syncMovieHcsControls();
     }
     oneDimensionalToggle.addEventListener("change", () => syncModelDependentControls(true));
-    solverSelect.addEventListener("change", syncModelDependentControls);
+    solverSelect.addEventListener("change", () => {
+      syncModelDependentControls();
+      document.getElementById("donki-profile").value =
+        document.querySelector('[name="solver"]').value === "hydro"
+          ? "sinusoidal" : "square";
+      applyDefaultsToDonkiCmes();
+    });
     if (includeBpolToggle) {
       includeBpolToggle.addEventListener("change", () => {
         syncMovieHcsControls(includeBpolToggle.checked);

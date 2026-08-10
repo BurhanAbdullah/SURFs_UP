@@ -82,6 +82,31 @@ def _secret_key() -> str:
         return secrets.token_urlsafe(48)
 
 
+def _configure_animation_ffmpeg() -> None:
+    """Point Matplotlib at the FFmpeg binary bundled by imageio-ffmpeg."""
+    import imageio_ffmpeg
+    import matplotlib
+
+    matplotlib.rcParams["animation.ffmpeg_path"] = imageio_ffmpeg.get_ffmpeg_exe()
+
+
+def _hydro_plot_with_calendar_date(plot_compressible):
+    """Wrap SURF's hydro map plotter to show UTC date beside elapsed time."""
+
+    def dated_plot(model, time, *args, **kwargs):
+        result = plot_compressible(model, time, *args, **kwargs)
+        figure = result[0]
+        timestamp = (model.time_init + time).strftime("%Y-%m-%d %H:%M")
+        for label in figure.texts:
+            elapsed = label.get_text().strip()
+            if elapsed.endswith(" days"):
+                label.set_text(f"{elapsed} | {timestamp}")
+                break
+        return result
+
+    return dated_plot
+
+
 def _session_id() -> str:
     """Return the signed-cookie-backed identifier for the current browser session."""
     identifier = session.get("surf_session_id")
@@ -269,19 +294,27 @@ def _save_uploaded_file(uploaded) -> Path:
 
 
 def _fetch_donki_cmes(
-    start: datetime.datetime, duration_days: float, solver: str = "huxt"
+    start: datetime.datetime,
+    duration_days: float,
+    solver: str = "huxt",
+    feature: str = "LE",
 ) -> list[dict[str, object]]:
     """Download and normalize DONKI cone CMEs for a model run interval."""
     end = start + datetime.timedelta(days=duration_days)
-    query = urlencode(
-        {
-            "startDate": start.date().isoformat(),
-            "endDate": end.date().isoformat(),
-            "mostAccurateOnly": "true",
-            "feature": "LE",
-            "catalog": "ALL",
-        }
-    )
+    feature = str(feature).strip().upper()
+    if feature not in {"LE", "SH", "NULL"}:
+        raise ValueError("DONKI feature must be LE, SH, or null.")
+    query_params = {
+        "startDate": start.date().isoformat(),
+        "endDate": end.date().isoformat(),
+        "mostAccurateOnly": "true",
+        "catalog": "ALL",
+    }
+    # Older DONKI CME analyses predate the feature field. Omitting the filter is
+    # how the API exposes those null/unspecified records.
+    if feature != "NULL":
+        query_params["feature"] = feature
+    query = urlencode(query_params)
     try:
         with urlopen(f"{_DONKI_URL}?{query}", timeout=30) as response:
             analyses = json.load(response)
@@ -922,6 +955,23 @@ def _request_from_form() -> SimulationRequest:
             "include_bpol": "include_bpol" in request.form,
             "track_cmes": "track_cmes" in request.form,
             "grab_donki_at_run_start": grab_donki_at_run_start,
+            "donki_cme_defaults": {
+                "feature": request.form.get("donki_feature", "LE").strip().upper(),
+                "thickness_rs": _float("donki_thickness_rs", 0.0),
+                "initial_height_rs": _float("donki_initial_height_rs", 21.5),
+                "cme_expansion": "donki_cme_expansion" in request.form,
+                "cme_fixed_duration": "donki_cme_fixed_duration" in request.form,
+                "fixed_duration_hr": _float("donki_fixed_duration_hr", 12.0),
+                "profile_type": request.form.get(
+                    "donki_profile_type",
+                    "sinusoidal" if request.form.get("solver") == "hydro" else "square",
+                ),
+                "plasma_mode": request.form.get("donki_plasma_mode", "Fraction of ambient"),
+                "density_fraction": _float("donki_density_fraction", 1.0),
+                "temperature_fraction": _float("donki_temperature_fraction", 1.0),
+                "cme_density_pcc": _float("donki_cme_density_pcc", 100.0),
+                "cme_temperature_k": _float("donki_cme_temperature_k", 100000.0),
+            },
             "streak_lines_enabled": "streak_lines_enabled" in request.form,
             "streak_spacing_deg": _float("streak_spacing_deg", 10.0),
             "simtime_days": simtime_days,
@@ -1342,7 +1392,12 @@ def create_app(config: dict | None = None) -> Flask:
         duration = float(request.args.get("duration", 10))
         try:
             return jsonify(
-                _fetch_donki_cmes(start, duration, request.args.get("solver", "huxt"))
+                _fetch_donki_cmes(
+                    start,
+                    duration,
+                    request.args.get("solver", "huxt"),
+                    request.args.get("feature", "LE"),
+                )
             )
         except DonkiAccessError as exc:
             abort(502, str(exc))
@@ -1441,6 +1496,7 @@ def create_app(config: dict | None = None) -> Flask:
 
     @app.get("/runs/<run_id>/movie/<kind>.mp4")
     def movie(run_id: str, kind: str):
+        _configure_animation_ffmpeg()
         import surf.surf_analysis as sa
 
         model = _model_for(run_id)
@@ -1483,7 +1539,17 @@ def create_app(config: dict | None = None) -> Flask:
                     if key in signature.parameters
                 }
             )
-            saved = animation(model, **supported_options)
+            original_plot_compressible = None
+            if animation is sa.animate and getattr(model, "compressible", False):
+                original_plot_compressible = sa.plot_compressible
+                sa.plot_compressible = _hydro_plot_with_calendar_date(
+                    original_plot_compressible
+                )
+            try:
+                saved = animation(model, **supported_options)
+            finally:
+                if original_plot_compressible is not None:
+                    sa.plot_compressible = original_plot_compressible
             movie_path = Path(saved) if saved else path
             payload = io.BytesIO(movie_path.read_bytes())
             movie_is_gif = movie_path.suffix.lower() == ".gif"

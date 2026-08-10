@@ -50,6 +50,31 @@ def test_datetime_axis_uses_two_day_labels_and_daily_minor_ticks_for_ten_days():
     plt.close(fig)
 
 
+def test_datetime_ticks_align_across_independent_timeseries_panels():
+    start = datetime.datetime(2026, 7, 1)
+    times = [start, start + datetime.timedelta(days=10)]
+    fig, axes = plt.subplots(4, 1, sharex=False)
+
+    format_datetime_axis_like_surf(fig, axes, times)
+
+    major_ticks = [axis.get_xticks() for axis in axes]
+    minor_ticks = [axis.get_xticks(minor=True) for axis in axes]
+    assert all(np.array_equal(ticks, major_ticks[0]) for ticks in major_ticks[1:])
+    assert all(np.array_equal(ticks, minor_ticks[0]) for ticks in minor_ticks[1:])
+    plt.close(fig)
+
+
+def test_datetime_axis_accepts_numpy_datetime_values_used_by_movies():
+    times = np.array(["2026-07-01", "2026-07-11"], dtype="datetime64[D]")
+    fig, axes = plt.subplots(4, 1, sharex=False)
+
+    format_datetime_axis_like_surf(fig, axes, times)
+
+    assert all(np.array_equal(axis.get_xticks(), axes[0].get_xticks()) for axis in axes[1:])
+    assert axes[-1].get_xlabel() == "DD-MM of 2026"
+    plt.close(fig)
+
+
 def request() -> SimulationRequest:
     return SimulationRequest.from_mappings(
         {
@@ -270,10 +295,49 @@ def test_generated_preview_fetches_donki_at_runtime_when_no_list_is_loaded():
     code = build_generated_code(simulation)
 
     compile(code, "<generated>", "exec")
-    assert "donki_cmes = sin.get_DONKI_cme_list(model, start_time, donki_end_time)" in code
-    assert "if solver == 'hydro':" in code
-    assert "donki_cme.profile_type = 'sinusoidal'" in code
+    assert "donki_cmes = sin.get_DONKI_cme_list(model, start_time, donki_end_time, feature='LE')" in code
+    assert "for donki_cme in donki_cmes:" in code
+    assert "donki_cme.profile_type = 'square'" in code
+    assert "donki_cme.density_fraction = 1.0" in code
     assert code.count("s.ConeCME") == 0
+
+
+def test_runtime_donki_cmes_use_selected_bulk_defaults():
+    simulation = request()
+    simulation.model.update(
+        grab_donki_at_run_start=True,
+        donki_cme_defaults={
+            "profile_type": "sinusoidal",
+            "cme_expansion": True,
+            "cme_fixed_duration": False,
+            "fixed_duration_hr": 9,
+            "thickness_rs": 4,
+            "initial_height_rs": 20,
+            "plasma_mode": "Fraction of ambient",
+            "density_fraction": 2,
+            "temperature_fraction": 3,
+        },
+    )
+
+    code = build_generated_code(simulation)
+
+    compile(code, "<generated>", "exec")
+    assert "donki_cme.profile_type = 'sinusoidal'" in code
+    assert "donki_cme.cme_expansion = True" in code
+    assert "donki_cme.density_fraction = 2.0" in code
+    assert "donki_cme.temperature_fraction = 3.0" in code
+
+
+def test_runtime_donki_query_can_include_null_feature_records():
+    simulation = request()
+    simulation.model.update(
+        grab_donki_at_run_start=True,
+        donki_cme_defaults={"feature": "null"},
+    )
+
+    code = build_generated_code(simulation)
+
+    assert "get_DONKI_cme_list(model, start_time, donki_end_time, feature='')" in code
 
 
 def test_generated_code_includes_preloaded_donki_list_when_runtime_fetch_is_off():

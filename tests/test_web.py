@@ -212,6 +212,7 @@ def test_page_exposes_run_gated_workflow_and_configuration_controls():
     assert b"Model Parameters" in response.data
     assert b"Advanced" in response.data
     assert b"Open manual CME editor" in response.data
+    assert b"Full angular width (deg)" in response.data
     assert b"Remove Selected" in response.data
     assert b'id="cme-editor"' in response.data
     assert b"id=\"load-donki\"" in response.data
@@ -463,6 +464,8 @@ def test_template_keeps_outputs_tab_visible_and_marks_new_outputs():
     assert 'id="movie-ts-omni" type="checkbox" checked' in template
     assert 'plot_omni: withTimeseries && document.getElementById("movie-ts-omni").checked' in template
     assert 'options["plot_omni"] = request.args.get("plot_omni", "1") == "1"' in app_source
+    assert "_configure_animation_ffmpeg()" in app_source
+    assert "_style_omni_hydro_timeseries" not in app_source
     assert "addPlotOutput(entry);" in template
     assert "saveFigureOutput(entry);" in template
     assert "URL.createObjectURL(blob)" not in template[
@@ -497,6 +500,28 @@ def test_movie_controls_follow_magnetic_boundary_availability():
     assert "function syncMovieHcsControls(defaultToChecked = false)" in template
     assert "checkbox.disabled = !available" in template
     assert "if (!available) checkbox.checked = false" in template
+
+
+def test_hydro_movie_map_adds_calendar_date_beside_model_time():
+    import astropy.units as u
+    from astropy.time import Time
+    import matplotlib.pyplot as plt
+
+    from surfs_up.web.app import _hydro_plot_with_calendar_date
+
+    figure = plt.figure()
+    figure.text(0.5, 0.5, "0.50 days")
+    model = SimpleNamespace(time_init=Time("2013-10-25T00:00:00"))
+
+    def plotter(*_args, **_kwargs):
+        return figure, []
+
+    wrapped = _hydro_plot_with_calendar_date(plotter)
+    result = wrapped(model, 0.5 * u.day)
+
+    assert result[0] is figure
+    assert figure.texts[0].get_text() == "0.50 days | 2013-10-25 12:00"
+    plt.close(figure)
 
 
 def test_generated_code_dialog_has_copy_button():
@@ -633,6 +658,50 @@ def test_donki_preview_matches_surf_query_and_cone_defaults(monkeypatch):
     assert all(cme["profile_type"] == "sinusoidal" for cme in hydro_cmes)
 
 
+def test_donki_null_feature_omits_api_filter(monkeypatch):
+    import surfs_up.web.app as web_app
+
+    requested_urls = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b"[]"
+
+    def fake_urlopen(url, timeout):
+        requested_urls.append(url)
+        return Response()
+
+    monkeypatch.setattr(web_app, "urlopen", fake_urlopen)
+    assert web_app._fetch_donki_cmes(
+        datetime.datetime(2013, 10, 25), 41, feature="null"
+    ) == []
+
+    assert "feature=" not in requested_urls[0]
+    assert "mostAccurateOnly=true" in requested_urls[0]
+
+
+def test_donki_feature_selector_is_sent_by_preview():
+    template = Path("surfs_up/web/templates/index.html").read_text(encoding="utf-8")
+
+    assert 'name="donki_feature" id="donki-feature"' in template
+    assert '<option value="LE">Leading edge (LE) (default)</option>' in template
+    assert '<option value="SH">Shock (SH)</option>' in template
+    assert '<option value="null">Unspecified / null (for early DONKI catalogue use)</option>' in template
+    assert template.index('id="donki-feature"') < template.index('id="load-donki"')
+    defaults_box = template[
+        template.index("Defaults for DONKI and new manual CMEs"):
+        template.index('id="choose-cone-file"')
+    ]
+    assert 'id="donki-feature"' not in defaults_box
+    assert '&feature=${encodeURIComponent(document.getElementById("donki-feature").value)}' in template
+
+
 def test_hydro_manual_cme_defaults_to_sinusoidal_with_unit_plasma_fractions():
     template = Path("surfs_up/web/templates/index.html").read_text(encoding="utf-8")
 
@@ -640,6 +709,31 @@ def test_hydro_manual_cme_defaults_to_sinusoidal_with_unit_plasma_fractions():
     assert 'id="cme-temperature-fraction" type="number" value="1"' in template
     assert "document.querySelector('[name=\"solver\"]').value === \"hydro\"" in template
     assert '? "sinusoidal"' in template
+
+
+def test_donki_bulk_controls_also_supply_new_manual_cme_defaults():
+    template = Path("surfs_up/web/templates/index.html").read_text(encoding="utf-8")
+
+    assert "Defaults for DONKI and new manual CMEs" in template
+    assert 'name="donki_cme_expansion"' in template
+    assert 'name="donki_density_fraction"' in template
+    assert 'name="donki_cme_temperature_k"' in template
+    assert "function cmeDefaults()" in template
+    assert 'if (cme.source === "donki") Object.assign(cme, defaults)' in template
+
+
+def test_model_start_change_clears_every_cme_because_launch_offsets_are_stale():
+    template = Path("surfs_up/web/templates/index.html").read_text(encoding="utf-8")
+
+    clearing = template[
+        template.index("function clearCmesForStartTimeChange()"):
+        template.index('modelStartInput.addEventListener("change"')
+    ]
+    assert "cmes.splice(0, cmes.length);" in clearing
+    assert "selectedCmeIndex = -1;" in clearing
+    assert "renderCmes();" in clearing
+    assert 'cme.source !== "donki"' not in clearing
+    assert "clearCmesForStartTimeChange();" in template
 
 
 def test_manual_cme_absolute_defaults_come_from_surf_constants():

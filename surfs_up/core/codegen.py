@@ -449,20 +449,45 @@ def build_generated_code(request: SimulationRequest) -> str:
     )
     lines.append("cme_list = []")
     if state.get("grab_donki_at_run_start"):
+        donki_defaults = state.get("donki_cme_defaults", {})
+        donki_feature = str(donki_defaults.get("feature", "LE")).strip().upper()
+        if donki_feature not in {"LE", "SH", "NULL"}:
+            donki_feature = "LE"
+        # SURF constructs this URL by concatenation. An empty value disables
+        # DONKI's feature filter, which is required for older null-feature rows.
+        donki_query_feature = "" if donki_feature == "NULL" else donki_feature
         lines.extend(
             [
                 "donki_end_time = start_time + datetime.timedelta(days=simtime.to_value(u.day))",
                 "try:",
-                "    donki_cmes = sin.get_DONKI_cme_list(model, start_time, donki_end_time)",
+                f"    donki_cmes = sin.get_DONKI_cme_list(model, start_time, donki_end_time, feature={donki_query_feature!r})",
                 "except Exception as exc:",
                 "    raise RuntimeError('DONKI CME data could not be accessed') from exc",
                 "print(f'Loaded {len(donki_cmes)} DONKI cone CMEs for this run')",
-                "if solver == 'hydro':",
-                "    for donki_cme in donki_cmes:",
-                "        donki_cme.profile_type = 'sinusoidal'",
-                "cme_list.extend(donki_cmes)",
+                "for donki_cme in donki_cmes:",
+                f"    donki_cme.profile_type = {donki_defaults.get('profile_type', 'sinusoidal' if solver == 'hydro' else 'square')!r}",
+                f"    donki_cme.cme_expansion = {bool(donki_defaults.get('cme_expansion', False))}",
+                f"    donki_cme.cme_fixed_duration = {bool(donki_defaults.get('cme_fixed_duration', True))}",
+                f"    donki_cme.fixed_duration = {float(donki_defaults.get('fixed_duration_hr', 12))}*u.hour",
+                f"    donki_cme.thickness = {float(donki_defaults.get('thickness_rs', 0))}*u.solRad",
+                f"    donki_cme.initial_height = {float(donki_defaults.get('initial_height_rs', state['rmin']))}*u.solRad",
             ]
         )
+        if donki_defaults.get("plasma_mode") == "Absolute values":
+            lines.extend(
+                [
+                    f"    donki_cme.cme_density = ({float(donki_defaults.get('cme_density_pcc', 100))}/u.cm**3*const.m_p).to(u.kg/u.m**3)",
+                    f"    donki_cme.cme_temperature = {float(donki_defaults.get('cme_temperature_k', 100000))}*u.K",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    f"    donki_cme.density_fraction = {float(donki_defaults.get('density_fraction', 1))}",
+                    f"    donki_cme.temperature_fraction = {float(donki_defaults.get('temperature_fraction', 1))}",
+                ]
+            )
+        lines.append("cme_list.extend(donki_cmes)")
     # "Grab at run start" replaces the editor contents with a fresh runtime query.
     literal_cmes = [] if state.get("grab_donki_at_run_start") else cmes
     for index, cme in enumerate(literal_cmes):
