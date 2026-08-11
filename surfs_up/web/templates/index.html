@@ -231,11 +231,13 @@
     </fieldset>
     <fieldset class="group-box">
       <legend class="group-title px-1">Coordinate settings</legend>
-      <div class="grid items-end gap-3 lg:grid-cols-[auto_1fr_auto_minmax(18rem,2fr)]">
-        <span class="pb-2 text-sm font-medium text-slate-600">Model latitude (deg; defaults to Earth)</span>
-        <label><span class="sr-only">Model latitude in degrees</span><input name="latitude" id="model-latitude" type="number" step="0.1" value="{{ '%.2f'|format(default_latitude) }}"></label>
-        <span class="pb-2 text-sm font-medium text-slate-600">Frame</span>
-        <label><span class="sr-only">Coordinate frame</span><select name="frame"><option value="synodic">Synodic (recommended for 1D runs)</option><option value="sidereal">Sidereal (recommended for 2D runs)</option></select></label>
+      <div class="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(12rem,1fr)_auto_minmax(8rem,0.65fr)_minmax(18rem,1.6fr)]">
+        <label class="grid gap-1.5"><span class="whitespace-nowrap text-sm font-medium text-slate-700">Model latitude</span><input class="w-full min-w-0" name="latitude" id="model-latitude" type="number" step="0.1" value="{{ '%.2f'|format(default_latitude) }}"></label>
+        <label class="pb-2"><span><input name="average_body_latitude" id="average-body-latitude" type="checkbox" checked> Use average latitude of body</span></label>
+        <label class="grid gap-1.5"><span class="text-sm font-medium text-slate-700">Body</span><select name="latitude_body" id="latitude-body">
+          {% for body in ["Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune"] %}<option{% if body == "Earth" %} selected{% endif %}>{{ body }}</option>{% endfor %}
+        </select></label>
+        <label class="grid gap-1.5"><span class="text-sm font-medium text-slate-700">Frame</span><select name="frame"><option value="synodic">Synodic (recommended for 1D runs)</option><option value="sidereal">Sidereal (recommended for 2D runs)</option></select></label>
       </div>
       <div class="mt-4 grid items-end gap-3 lg:grid-cols-[minmax(16rem,auto)_1fr]">
         <label class="pb-2"><span><input name="is_1d" id="model-is-1d" type="checkbox" checked> Run as 1D (single longitude)</span></label>
@@ -540,14 +542,21 @@
         </div>
         <section class="product-panel wide" id="map-controls" data-inner-panel="map-product">
           <h3 class="sr-only">2D Map (sa.plot)</h3>
-          <div class="grid max-w-2xl gap-3">
-            <label class="grid items-center gap-3 sm:grid-cols-[10rem_1fr]">Time (days)
+          <div class="grid gap-3">
+            <label class="grid max-w-2xl items-center gap-3 sm:grid-cols-[10rem_1fr]">Time (days)
               <input id="plot-time" type="number" min="0" max="1000" step="0.1" value="1.5">
             </label>
+            <fieldset class="body-selector w-full rounded-lg border border-slate-200 p-3">
+              <legend class="px-1 text-sm font-medium text-slate-700">Bodies</legend>
+              <div class="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-2">
+                {% for value, label in plot_body_choices %}<label><span><input class="map-body" type="checkbox" value="{{ value }}"{% if value in default_plot_bodies %} checked{% endif %}> {{ label }}</span></label>{% endfor %}
+              </div>
+            </fieldset>
             <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <label><span><input id="map-minimal" type="checkbox"> Minimal plot</span></label>
               <label><span><input id="map-hcs" type="checkbox" checked> Plot HCS</span></label>
               <label><span><input id="map-annotate" type="checkbox" checked> Annotate plot</span></label>
+              <label><span><input id="map-body-latitudes" type="checkbox"> Show body latitudes in legend</span></label>
               <label><span><input id="map-earth" type="checkbox"> Trace Earth connection (slow)</span></label>
               <label><span><input id="map-limit-rmax" type="checkbox"> Limit outer radius (Rs)</span></label>
               <input class="max-w-40" aria-label="Outer radius in solar radii" id="map-rmax"
@@ -604,18 +613,25 @@
     <section class="card tab-panel" data-panel="movies" role="tabpanel">
       {% if run_id %}
       <form class="form-grid wide" id="movies-form" onsubmit="return false">
-        <div class="grid max-w-4xl gap-4">
-          <div class="grid gap-3 sm:grid-cols-3">
+        <div class="grid wide gap-4">
+          <div class="grid max-w-4xl gap-3 sm:grid-cols-3">
             <label>Tag<input id="movie-tag" value="gui"></label>
             <label>Duration (s)<input id="movie-duration" type="number" min="1" max="600" value="10"></label>
             <label>Frame rate (fps)<input id="movie-fps" type="number" min="1" max="60" value="5"></label>
           </div>
-          <div class="flex flex-wrap items-center gap-4">
+          <div class="flex max-w-4xl flex-wrap items-center gap-4">
             <label id="movie-hcs-label" class="opacity-50"><span><input id="movie-hcs" type="checkbox" checked disabled> Plot HCS</span></label>
+            <label><span><input id="movie-body-latitudes" type="checkbox"> Show body latitudes in legend</span></label>
             <label><span><input id="movie-limit-rmax" type="checkbox"> Limit outer radius (Rs)</span></label>
             <input class="max-w-40" aria-label="Movie outer radius in solar radii" id="movie-rmax"
                    type="number" min="1" max="5000" value="240" step="5" disabled>
           </div>
+          <fieldset class="body-selector w-full rounded-lg border border-slate-200 p-3">
+            <legend class="px-1 text-sm font-medium text-slate-700">Bodies</legend>
+            <div class="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-2">
+              {% for value, label in plot_body_choices %}<label><span><input class="movie-body" type="checkbox" value="{{ value }}"{% if value in default_plot_bodies %} checked{% endif %}> {{ label }}</span></label>{% endfor %}
+            </div>
+          </fieldset>
         </div>
         <div class="inner-tabs" data-inner-tabs="movie-products">
           <button type="button" class="inner-tab-button active" data-inner-tab="map-movie">2D Movie</button>
@@ -661,6 +677,10 @@
   {% if run_id %}
     <script>
       const runBase = {{ url_for('index')|tojson }} + "runs/{{ run_id }}";
+      function selectedPlotBodies(selector) {
+        return [...document.querySelectorAll(`${selector}:checked`)]
+          .map(input => input.value).join(",");
+      }
       function values() {
         return {
           time: document.getElementById("plot-time").value,
@@ -674,6 +694,8 @@
           minimal: document.getElementById("map-minimal").checked ? "1" : "0",
           plot_hcs: document.getElementById("map-hcs").checked ? "1" : "0",
           annotate: document.getElementById("map-annotate").checked ? "1" : "0",
+          show_body_latitudes: document.getElementById("map-body-latitudes").checked ? "1" : "0",
+          bodies: selectedPlotBodies(".map-body"),
           trace_earth: document.getElementById("map-earth").checked ? "1" : "0",
           plot_rmax: document.getElementById("map-limit-rmax").checked
             ? document.getElementById("map-rmax").value : ""
@@ -800,6 +822,8 @@
           duration: document.getElementById("movie-duration").value,
           fps: document.getElementById("movie-fps").value,
           plot_hcs: document.getElementById("movie-hcs").checked ? "1" : "0",
+          show_body_latitudes: document.getElementById("movie-body-latitudes").checked ? "1" : "0",
+          bodies: selectedPlotBodies(".movie-body"),
           plot_rmax: document.getElementById("movie-limit-rmax").checked
             ? document.getElementById("movie-rmax").value : "",
           field: document.getElementById("movie-ts-field").value,
@@ -1092,6 +1116,9 @@
         const minimal = pyBool(document.getElementById("map-minimal").checked);
         const plotHcs = pyBool(document.getElementById("map-hcs").checked);
         const annotate = pyBool(document.getElementById("map-annotate").checked);
+        const showBodyLatitudes = pyBool(document.getElementById("map-body-latitudes").checked);
+        const bodyNames = selectedPlotBodies(".map-body").split(",").filter(Boolean);
+        const bodies = JSON.stringify(bodyNames);
         const traceEarth = pyBool(document.getElementById("map-earth").checked);
         const plotRmax = document.getElementById("map-limit-rmax").checked
           ? document.getElementById("map-rmax").value
@@ -1106,6 +1133,8 @@
             `    minimalplot=${minimal},`,
             `    plotHCS=${plotHcs},`,
             `    annotateplot=${annotate},`,
+            `    show_body_latitudes=${showBodyLatitudes},`,
+            `    bodies=${bodies},`,
             `    trace_earth_connection=${traceEarth},`,
             `    plot_rmax=${plotRmax},`,
             ")",
@@ -1119,6 +1148,8 @@
           `    ${Number(timeValue).toFixed(1)} * u.day,`,
           `    minimalplot=${minimal},`,
           `    annotateplot=${annotate},`,
+          `    show_body_latitudes=${showBodyLatitudes},`,
+          `    bodies=${bodies},`,
           `    plot_rmax=${plotRmax},`,
           `    plotHCS=${plotHcs},`,
           ")",
@@ -1947,6 +1978,9 @@
     const modelCrNumber = document.getElementById("model-cr-number");
     const modelCrLongitude = document.getElementById("model-cr-longitude");
     const modelLatitude = document.getElementById("model-latitude");
+    const averageBodyLatitude = document.getElementById("average-body-latitude");
+    const latitudeBody = document.getElementById("latitude-body");
+    const simulationDuration = document.querySelector('[name="simtime_days"]');
     const modelIs1D = document.getElementById("model-is-1d");
     const modelLongitudeRow = document.getElementById("model-longitude-row");
     const modelLongitudeStart = document.querySelector('[name="lon_min"]');
@@ -2049,11 +2083,33 @@
       modelStartInput.value = coordinates.datetime;
       modelCrNumber.value = coordinates.cr_num;
       modelCrLongitude.value = coordinates.cr_lon.toFixed(2);
-      modelLatitude.value = coordinates.earth_latitude.toFixed(2);
+      if (!averageBodyLatitude.checked) {
+        modelLatitude.value = coordinates.earth_latitude.toFixed(2);
+      } else {
+        await updateAverageBodyLatitude();
+      }
       syncCmeDatetimeFromDay();
       syncOmniForecastTime();
       syncOmniIcmeDefault();
       clearCmesForStartTimeChange();
+    }
+    let averageLatitudeRequest = 0;
+    async function updateAverageBodyLatitude() {
+      const enabled = averageBodyLatitude.checked;
+      latitudeBody.disabled = !enabled;
+      if (!enabled || !modelStartInput.value || !(Number(simulationDuration.value) > 0)) return;
+      const requestNumber = ++averageLatitudeRequest;
+      const parameters = new URLSearchParams({
+        datetime: modelStartInput.value,
+        duration: simulationDuration.value,
+        body: latitudeBody.value
+      });
+      const response = await fetch(`{{ url_for("average_body_latitude") }}?${parameters}`);
+      if (!response.ok) throw new Error(await response.text());
+      const result = await response.json();
+      if (requestNumber === averageLatitudeRequest && averageBodyLatitude.checked) {
+        modelLatitude.value = result.average_latitude.toFixed(2);
+      }
     }
     function clearCmesForStartTimeChange() {
       if (!cmes.length) return;
@@ -2070,6 +2126,16 @@
     });
     modelStartInput.addEventListener("input", syncOmniForecastTime);
     modelStartInput.addEventListener("input", syncOmniIcmeDefault);
+    averageBodyLatitude.addEventListener("change", () => updateAverageBodyLatitude().catch(console.error));
+    latitudeBody.addEventListener("change", () => updateAverageBodyLatitude().catch(console.error));
+    simulationDuration.addEventListener("change", () => updateAverageBodyLatitude().catch(console.error));
+    modelLatitude.addEventListener("input", event => {
+      if (event.isTrusted && averageBodyLatitude.checked) {
+        averageBodyLatitude.checked = false;
+        updateAverageBodyLatitude().catch(console.error);
+      }
+    });
+    updateAverageBodyLatitude().catch(console.error);
     syncSpacecraftIcmeOptions();
     if (!restoredPreRunConfiguration) {
       syncOmniForecastTime();

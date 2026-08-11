@@ -59,6 +59,13 @@ _RUN_CACHE_DIR = Path(
     os.environ.get("SURFS_UP_RUN_CACHE_DIR", Path.home() / ".cache" / "surfs_up" / "runs")
 )
 _DONKI_URL = "https://kauai.ccmc.gsfc.nasa.gov/DONKI/WS/get/CMEAnalysis"
+_PLOT_BODY_CHOICES = (
+    ("MERCURY", "Mercury"), ("VENUS", "Venus"), ("EARTH", "Earth"),
+    ("MARS", "Mars"), ("JUPITER", "Jupiter"), ("SATURN", "Saturn"),
+    ("ACE", "ACE"), ("STA", "STEREO-A"), ("STB", "STEREO-B"),
+    ("PSP", "Parker Solar Probe"), ("SOLO", "Solar Orbiter"),
+    ("ULYSSES", "Ulysses"),
+)
 
 
 def _secret_key() -> str:
@@ -245,6 +252,34 @@ def _earth_latitude_at(model_time: datetime.datetime):
     return sun.B0(model_time).to(u.deg)
 
 
+_AVERAGE_LATITUDE_BODIES = {
+    "Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune"
+}
+
+
+def _average_body_latitude(
+    body: str, start: datetime.datetime, duration_days: float
+) -> float:
+    """Return a time-sampled mean heliographic latitude for a Solar-System body."""
+    import numpy as np
+    import astropy.units as u
+    from astropy.time import Time
+    from sunpy.coordinates.ephemeris import get_body_heliographic_stonyhurst
+
+    if body not in _AVERAGE_LATITUDE_BODIES:
+        raise ValueError(f"Unsupported body: {body}")
+    if not math.isfinite(duration_days) or duration_days <= 0:
+        raise ValueError("Run duration must be positive.")
+
+    # Daily samples, including both endpoints, resolve the smooth orbital latitude
+    # variation without making long runs unnecessarily expensive.
+    sample_count = max(2, int(math.ceil(duration_days)) + 1)
+    offsets = np.linspace(0.0, duration_days, sample_count)
+    times = Time(start) + offsets * u.day
+    coordinates = get_body_heliographic_stonyhurst(body, times)
+    return float(np.mean(coordinates.lat.to_value(u.deg)))
+
+
 def _model_defaults() -> dict[str, object]:
     """Return the same time-dependent defaults initialized by the Qt model tab."""
     import astropy.units as u
@@ -256,7 +291,7 @@ def _model_defaults() -> dict[str, object]:
         today - datetime.timedelta(days=5)
     ).replace(tzinfo=None, microsecond=0)
     cr_num, cr_lon = sin.datetime2surfinputs(now)
-    earth_latitude = _earth_latitude_at(now)
+    earth_latitude = _average_body_latitude("Earth", now, 10.0)
     surf_defaults = s.surf_constants()
     return {
         "default_start": now.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -265,11 +300,7 @@ def _model_defaults() -> dict[str, object]:
         ),
         "default_cr_num": int(cr_num),
         "default_cr_lon": cr_lon.to_value(u.deg),
-        "default_latitude": (
-            earth_latitude.to_value(u.deg)
-            if hasattr(earth_latitude, "to_value")
-            else float(earth_latitude)
-        ),
+        "default_latitude": float(earth_latitude),
         "default_cme_density_pcc": surf_defaults["n_sw_21p5"].to_value(
             u.cm ** -3
         ),
@@ -280,6 +311,41 @@ def _model_defaults() -> dict[str, object]:
 def _float(name: str, default: float) -> float:
     value = request.form.get(name, "").strip()
     return float(value) if value else default
+
+
+def _requested_plot_bodies():
+    """Parse an optional comma-separated observer override from the query string."""
+    if "bodies" not in request.args:
+        return None
+    value = request.args.get("bodies", "").strip()
+    return [body.strip().upper() for body in value.split(",") if body.strip()]
+
+
+def _default_plot_bodies(model) -> list[str]:
+    """Return SURF's radius/date-dependent default bodies for a solved model."""
+    import surf.surf_analysis as sa
+
+    return [
+        body
+        for body in sa.get_planets_to_plot(model) + sa.get_spacecraft_to_plot(model)
+        if body != "ACE"
+    ]
+
+
+def _available_plot_body_choices(model):
+    """Return observers that enter the solved model's radial domain during the run."""
+    import numpy as np
+
+    outer_radius = model.r[-1]
+    available = []
+    for value, label in _PLOT_BODY_CHOICES:
+        try:
+            radii = model.get_observer(value).r.to_value(outer_radius.unit)
+        except Exception:
+            continue
+        if np.any(np.isfinite(radii) & (radii <= outer_radius.value)):
+            available.append((value, label))
+    return tuple(available)
 
 
 def _save_uploaded_file(uploaded) -> Path:
@@ -1058,6 +1124,20 @@ def create_app(config: dict | None = None) -> Flask:
             }
         )
 
+    @app.get("/average-body-latitude")
+    def average_body_latitude():
+        """Calculate a body's mean heliographic latitude over a model run."""
+        try:
+            start = datetime.datetime.fromisoformat(
+                request.args["datetime"].strip().replace("T", " ")
+            )
+            duration_days = float(request.args.get("duration", "10"))
+            body = request.args.get("body", "Earth").strip().title()
+            latitude = _average_body_latitude(body, start, duration_days)
+        except (KeyError, TypeError, ValueError) as error:
+            abort(400, str(error))
+        return jsonify({"body": body, "average_latitude": latitude})
+
     @app.post("/ambient-file-time")
     def ambient_file_time():
         """Infer the start time from a selected ambient file."""
@@ -1090,6 +1170,8 @@ def create_app(config: dict | None = None) -> Flask:
             "run_id": None,
             "show_movies": False,
             "show_code_dialog": False,
+            "plot_body_choices": _PLOT_BODY_CHOICES,
+            "default_plot_bodies": [],
         }
         requested_run_id = request.args.get("run_id", "")
         if requested_run_id:
@@ -1108,6 +1190,9 @@ def create_app(config: dict | None = None) -> Flask:
             if context["result"].success:
                 context["run_id"] = requested_run_id
                 context["show_movies"] = bool(status.get("show_movies", False))
+                retained_model = _model_for(requested_run_id)
+                context["default_plot_bodies"] = _default_plot_bodies(retained_model)
+                context["plot_body_choices"] = _available_plot_body_choices(retained_model)
         if request.method == "POST":
             try:
                 simulation = _request_from_form()
@@ -1137,6 +1222,12 @@ def create_app(config: dict | None = None) -> Flask:
                             ),
                         )
                     if context["result"].success and context["result"].model is not None:
+                        context["default_plot_bodies"] = _default_plot_bodies(
+                            context["result"].model
+                        )
+                        context["plot_body_choices"] = _available_plot_body_choices(
+                            context["result"].model
+                        )
                         context["run_id"] = _retain_model(
                             context["result"].model, simulation
                         )
@@ -1204,6 +1295,10 @@ def create_app(config: dict | None = None) -> Flask:
                     "minimalplot": request.args.get("minimal") == "1",
                     "plotHCS": request.args.get("plot_hcs", "1") == "1",
                     "annotateplot": request.args.get("annotate", "1") == "1",
+                    "show_body_latitudes": (
+                        request.args.get("show_body_latitudes") == "1"
+                    ),
+                    "bodies": _requested_plot_bodies(),
                     "plot_rmax": (
                         float(request.args["plot_rmax"])
                         if request.args.get("plot_rmax")
@@ -1509,6 +1604,10 @@ def create_app(config: dict | None = None) -> Flask:
                 "duration": duration,
                 "fps": fps,
                 "plotHCS": request.args.get("plot_hcs", "1") == "1",
+                "show_body_latitudes": (
+                    request.args.get("show_body_latitudes") == "1"
+                ),
+                "bodies": _requested_plot_bodies(),
                 "plot_rmax": (
                     float(request.args["plot_rmax"])
                     if request.args.get("plot_rmax")

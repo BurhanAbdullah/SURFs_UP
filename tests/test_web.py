@@ -1134,6 +1134,120 @@ def test_model_coordinate_endpoint_updates_date_and_latitude_when_cr_changes():
     assert first["earth_latitude"] != second["earth_latitude"]
 
 
+def test_average_body_latitude_endpoint_uses_requested_interval(monkeypatch):
+    import surfs_up.web.app as web_app
+
+    captured = {}
+
+    def fake_average(body, start, duration):
+        captured.update(body=body, start=start, duration=duration)
+        return 3.25
+
+    monkeypatch.setattr(web_app, "_average_body_latitude", fake_average)
+    response = create_app({"TESTING": True}).test_client().get(
+        "/average-body-latitude?datetime=2026-07-03T12:00:00&duration=8.5&body=Mars"
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"body": "Mars", "average_latitude": 3.25}
+    assert captured == {
+        "body": "Mars",
+        "start": datetime.datetime(2026, 7, 3, 12, 0),
+        "duration": 8.5,
+    }
+
+
+def test_model_latitude_offers_average_body_control():
+    template = Path("surfs_up/web/templates/index.html").read_text(encoding="utf-8")
+
+    assert 'id="average-body-latitude" type="checkbox" checked' in template
+    assert 'id="latitude-body"' in template
+    assert 'body: latitudeBody.value' in template
+    assert 'if (event.isTrusted && averageBodyLatitude.checked)' in template
+    assert '>Model latitude</span><input class="w-full min-w-0"' in template
+    assert 'modelLatitude.dispatchEvent(new Event("input"' not in template
+
+
+def test_model_defaults_to_earth_average_latitude(monkeypatch):
+    import surfs_up.web.app as web_app
+
+    captured = {}
+
+    def fake_average(body, start, duration):
+        captured.update(body=body, start=start, duration=duration)
+        return 4.125
+
+    monkeypatch.setattr(web_app, "_average_body_latitude", fake_average)
+    defaults = web_app._model_defaults()
+
+    assert defaults["default_latitude"] == 4.125
+    assert captured["body"] == "Earth"
+    assert captured["duration"] == 10.0
+
+
+def test_map_and_movie_controls_surface_body_latitude_legends():
+    template = Path("surfs_up/web/templates/index.html").read_text(encoding="utf-8")
+    app_source = Path("surfs_up/web/app.py").read_text(encoding="utf-8")
+
+    assert 'id="map-body-latitudes"' in template
+    assert 'id="movie-body-latitudes"' in template
+    assert 'show_body_latitudes: document.getElementById("map-body-latitudes")' in template
+    assert 'show_body_latitudes: document.getElementById("movie-body-latitudes")' in template
+    assert 'request.args.get("show_body_latitudes") == "1"' in app_source
+
+
+def test_map_and_movie_controls_accept_optional_body_lists():
+    template = Path("surfs_up/web/templates/index.html").read_text(encoding="utf-8")
+    app_source = Path("surfs_up/web/app.py").read_text(encoding="utf-8")
+
+    assert 'class="map-body" type="checkbox"' in template
+    assert 'class="movie-body" type="checkbox"' in template
+    assert 'bodies: selectedPlotBodies(".map-body")' in template
+    assert 'bodies: selectedPlotBodies(".movie-body")' in template
+    assert 'value in default_plot_bodies' in template
+    assert template.count('class="body-selector w-full rounded-lg') == 2
+    assert template.count('grid-cols-[repeat(auto-fit,minmax(9rem,1fr))]') == 2
+    movies = template[template.index('id="movies-form"'):template.index('data-panel="outputs"')]
+    assert '<div class="grid wide gap-4">' in movies
+    assert '`    bodies=${bodies},`' in template
+    assert '"bodies": _requested_plot_bodies()' in app_source
+
+
+def test_web_plot_body_defaults_exclude_ace(monkeypatch):
+    import surf.surf_analysis as sa
+    import surfs_up.web.app as web_app
+
+    monkeypatch.setattr(sa, "get_planets_to_plot", lambda model: ["EARTH", "VENUS"])
+    monkeypatch.setattr(sa, "get_spacecraft_to_plot", lambda model: ["ACE", "STA"])
+
+    assert web_app._default_plot_bodies(object()) == ["EARTH", "VENUS", "STA"]
+
+
+def test_available_plot_bodies_omit_observers_outside_outer_boundary():
+    import astropy.units as u
+    import numpy as np
+    import surfs_up.web.app as web_app
+
+    radii = {
+        "EARTH": np.array([214, 216]) * u.solRad,
+        "MARS": np.array([320, 330]) * u.solRad,
+        "ACE": np.array([214, 216]) * u.solRad,
+    }
+
+    class Model:
+        r = np.array([21.5, 240]) * u.solRad
+
+        def get_observer(self, body):
+            if body not in radii:
+                raise ValueError(body)
+            return SimpleNamespace(r=radii[body])
+
+    assert web_app._available_plot_body_choices(Model()) == (
+        ("EARTH", "Earth"),
+        ("ACE", "ACE"),
+    )
+
+
 def test_carrington_controls_update_coordinates_while_editing():
     template = Path("surfs_up/web/templates/index.html").read_text(encoding="utf-8")
 
