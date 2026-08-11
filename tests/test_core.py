@@ -499,6 +499,26 @@ def test_generated_omni_forecast_does_not_pass_spacecraft_argument():
     assert "staSURF_forecast" not in code
 
 
+def test_generated_swpc_forecast_downloads_realtime_l1_data():
+    simulation = request()
+    simulation.ambient = {
+        "source": "insitu_backmapped",
+        "mode": "forecast",
+        "forecast_datetime": "2026-08-11 12:00:00",
+        "spacecraft": "SWPC",
+        "icme_list": "None",
+    }
+
+    code = build_generated_code(simulation)
+
+    compile(code, "<generated>", "exec")
+    assert "sinsit.get_SWPC_realtime(" in code
+    assert "datetime.datetime.fromisoformat('2026-08-11 12:00:00')" in code
+    assert "omni_input=omni_input" in code
+    assert "omniSURF_forecast" in code
+    assert "sinsit.get_omni(" not in code
+
+
 def test_generated_omni_forecast_passes_gamma_only_for_compressible_solver():
     simulation = request()
     simulation.model["solver"] = "hydro"

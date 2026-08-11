@@ -34,6 +34,17 @@ def _raw_omni_gap_fill_lines(start: str, end: str) -> list[str]:
     ]
 
 
+def _raw_swpc_gap_fill_lines(start: str, end: str) -> list[str]:
+    """Download SWPC real-time L1 data and fill ordinary numeric gaps."""
+    return [
+        f"omni_input = sinsit.get_SWPC_realtime({start}, {end})",
+        "omni_numeric = omni_input.select_dtypes(include='number').columns",
+        "omni_input[omni_numeric] = omni_input[omni_numeric].interpolate(",
+        "    method='linear', limit_direction='both'",
+        ")",
+    ]
+
+
 def build_uniform_boundary_code(request: SimulationRequest) -> str:
     """Build a SURF script for the portable, user-specified boundary workflow."""
     request.validate()
@@ -270,6 +281,10 @@ def build_generated_code(request: SimulationRequest) -> str:
                 )
             if spacecraft == "OMNI":
                 lines.extend(_raw_omni_gap_fill_lines(raw_omni_start, raw_omni_end))
+            elif spacecraft == "SWPC":
+                swpc_end = raw_omni_end if fn.endswith("reconstruction") else forecast_time
+                lines.extend(_raw_swpc_gap_fill_lines(raw_omni_start, swpc_end))
+            if spacecraft in {"OMNI", "SWPC"}:
                 if omni_icme_list != "None":
                     pre_icme_buffer_days = float(
                         ambient.get("pre_icme_buffer_days", 0.2)
@@ -298,7 +313,7 @@ def build_generated_code(request: SimulationRequest) -> str:
                 )
             omni_input_arg = (
                 ", omni_input=omni_input"
-                if spacecraft == "OMNI"
+                if spacecraft in {"OMNI", "SWPC"}
                 else ""
             )
             gamma_arg = ", gamma=gamma" if solver != "huxt" else ""

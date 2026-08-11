@@ -275,7 +275,8 @@ def test_template_uses_clearer_top_tabs_without_duplicate_panel_headings():
     assert '("omni_group", "In SItu")' in template
     assert '>In SItu boundary conditions</legend>' in template
     assert '<select name="insitu_spacecraft" id="insitu-spacecraft">' in template
-    assert '<option value="OMNI" selected>OMNI</option>' in template
+    assert '<option value="OMNI"{% if default_insitu_source == "OMNI" %} selected{% endif %}>OMNI</option>' in template
+    assert '<option value="SWPC"{% if default_insitu_source == "SWPC" %} selected{% endif %}>SWPC real-time L1</option>' in template
     assert '<option value="STEREO-A">STEREO-A</option>' in template
     assert '[["STEREO-A", "Jian list"], ["None", "None"]]' in template
     assert 'syncSpacecraftIcmeOptions(true)' in template
@@ -381,9 +382,25 @@ def test_timeseries_is_default_plot_product_and_offers_observer_data():
     assert 'SOLO: "Plot Solar Orbiter data"' in template
     assert 'STA: "Plot STEREO-A data"' in template
     assert "observationLabels[timeseriesObserver?.value]" in template
-    assert 'sa.plot_earth_timeseries(model, plot_omni=True)' in template
+    assert 'sa.plot_earth_timeseries(model, plot_omni=True, insitu_source=' in template
     assert 'sa.plot_earth_timeseries(model, plot_omni=False)' in template
-    assert 'OMNI may be unavailable for the requested dates.' in template
+    assert 'may be unavailable for the requested dates.' in template
+    assert 'id="timeseries-insitu-source"' in template
+    assert 'id="movie-ts-insitu-source"' in template
+    assert 'options["insitu_source"] = request.args.get(' in app_source
+
+
+def test_recent_runs_default_to_swpc_realtime():
+    import surfs_up.web.app as web_app
+
+    now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+    assert web_app._default_insitu_source(now) == "SWPC"
+    assert web_app._default_insitu_source(now - datetime.timedelta(days=120)) == "OMNI"
+
+    template = Path("surfs_up/web/templates/index.html").read_text(encoding="utf-8")
+    app_source = Path("surfs_up/web/app.py").read_text(encoding="utf-8")
+    assert "cutoff.setUTCMonth(cutoff.getUTCMonth() - 3)" in template
+    assert 'insituSpacecraft.value = utcInputDate(omniForecastDatetime) >= cutoff ? "SWPC" : "OMNI"' in template
     assert '"PSP": ("get_psp", "Parker Solar Probe")' in app_source
     assert '"SOLO": ("get_solo", "Solar Orbiter")' in app_source
     assert '"STA": ("get_stereo_a", "STEREO-A")' in app_source

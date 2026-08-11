@@ -332,6 +332,16 @@ def _default_plot_bodies(model) -> list[str]:
     ]
 
 
+def _default_insitu_source(model_time) -> str:
+    """Prefer SWPC for runs within the rolling three-month real-time window."""
+    if hasattr(model_time, "to_datetime"):
+        model_time = model_time.to_datetime()
+    if getattr(model_time, "tzinfo", None) is not None:
+        model_time = model_time.replace(tzinfo=None)
+    cutoff = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - datetime.timedelta(days=92)
+    return "SWPC" if model_time >= cutoff else "OMNI"
+
+
 def _available_plot_body_choices(model):
     """Return observers that enter the solved model's radial domain during the run."""
     import numpy as np
@@ -934,7 +944,7 @@ def _request_from_form() -> SimulationRequest:
         ambient["mode"] = request.form.get("insitu_mode", "forecast")
         spacecraft = request.form.get("insitu_spacecraft", "OMNI")
         ambient["spacecraft"] = (
-            spacecraft if spacecraft in {"OMNI", "STEREO-A"} else "OMNI"
+            spacecraft if spacecraft in {"OMNI", "SWPC", "STEREO-A"} else "OMNI"
         )
         ambient["forecast_datetime"] = request.form.get("omni_forecast_datetime", "")
         requested_icme_list = request.form.get("omni_icme_list", "")
@@ -1172,6 +1182,7 @@ def create_app(config: dict | None = None) -> Flask:
             "show_code_dialog": False,
             "plot_body_choices": _PLOT_BODY_CHOICES,
             "default_plot_bodies": [],
+            "default_insitu_source": "SWPC",
         }
         requested_run_id = request.args.get("run_id", "")
         if requested_run_id:
@@ -1193,6 +1204,9 @@ def create_app(config: dict | None = None) -> Flask:
                 retained_model = _model_for(requested_run_id)
                 context["default_plot_bodies"] = _default_plot_bodies(retained_model)
                 context["plot_body_choices"] = _available_plot_body_choices(retained_model)
+                context["default_insitu_source"] = _default_insitu_source(
+                    retained_model.time_init
+                )
         if request.method == "POST":
             try:
                 simulation = _request_from_form()
@@ -1227,6 +1241,9 @@ def create_app(config: dict | None = None) -> Flask:
                         )
                         context["plot_body_choices"] = _available_plot_body_choices(
                             context["result"].model
+                        )
+                        context["default_insitu_source"] = _default_insitu_source(
+                            context["result"].model.time_init
                         )
                         context["run_id"] = _retain_model(
                             context["result"].model, simulation
@@ -1330,16 +1347,20 @@ def create_app(config: dict | None = None) -> Flask:
                     plot_omni = request.args.get(
                         "plot_insitu", request.args.get("plot_omni", "1")
                     ) == "1"
+                    insitu_source = request.args.get("insitu_source", "OMNI").upper()
+                    if insitu_source not in {"OMNI", "SWPC"}:
+                        abort(400, "Unknown Earth observation source.")
                     try:
                         figure, axes = sa.plot_earth_timeseries(
-                            model, plot_omni=plot_omni
+                            model, plot_omni=plot_omni, insitu_source=insitu_source
                         )
                     except Exception:
                         if not plot_omni:
                             raise
                         app.logger.warning(
-                            "OMNI data could not be plotted; returning the SURF-only "
+                            "%s data could not be plotted; returning the SURF-only "
                             "Earth time series.",
+                            insitu_source,
                             exc_info=True,
                         )
                         plt.close("all")
@@ -1621,6 +1642,9 @@ def create_app(config: dict | None = None) -> Flask:
             elif kind == "timeseries":
                 options["polar_var"] = request.args.get("field", "V")
                 options["plot_omni"] = request.args.get("plot_omni", "1") == "1"
+                options["insitu_source"] = request.args.get(
+                    "insitu_source", "OMNI"
+                ).upper()
                 animation = sa.animate_with_ts
             else:
                 abort(404)

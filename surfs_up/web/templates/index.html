@@ -360,7 +360,8 @@
               <option value="reconstruction">Reconstruction (requires 27 days of data after run end time)</option>
             </select></label>
             <label>Spacecraft <select name="insitu_spacecraft" id="insitu-spacecraft">
-              <option value="OMNI" selected>OMNI</option>
+              <option value="OMNI"{% if default_insitu_source == "OMNI" %} selected{% endif %}>OMNI</option>
+              <option value="SWPC"{% if default_insitu_source == "SWPC" %} selected{% endif %}>SWPC real-time L1</option>
               <option value="STEREO-A">STEREO-A</option>
             </select></label>
             <label>Forecast time<input name="omni_forecast_datetime" id="omni-forecast-datetime" type="datetime-local" step="1"></label>
@@ -589,8 +590,11 @@
                   ("STB","STEREO-B"),("ULYSSES","Ulysses"),("custom","Custom coordinates")] %}
                 <option value="{{ value }}">{{ label }}</option>{% endfor %}
               </select>
-              <label id="timeseries-insitu-option"><span><input id="timeseries-plot-omni" type="checkbox" checked> <span id="timeseries-insitu-label">Plot OMNI</span></span></label>
+              <label id="timeseries-insitu-option"><span><input id="timeseries-plot-omni" type="checkbox" checked> <span id="timeseries-insitu-label">Plot observations</span></span></label>
             </div>
+            <label id="timeseries-earth-source" class="grid items-center gap-3 sm:grid-cols-[10rem_1fr]">Earth observations
+              <select id="timeseries-insitu-source"><option value="OMNI"{% if default_insitu_source == "OMNI" %} selected{% endif %}>OMNI</option><option value="SWPC"{% if default_insitu_source == "SWPC" %} selected{% endif %}>SWPC real-time L1</option></select>
+            </label>
             <p class="text-sm text-slate-500">Standard locations follow each observer's ephemeris throughout the run. Custom longitude is fixed on the SURF model grid: HEEQ/model longitude at run start for sidereal runs, or corotating model longitude for synodic runs.</p>
             <div class="hidden grid-cols-1 items-end gap-3 sm:grid-cols-[10rem_1fr_1fr]" id="timeseries-custom-coordinates">
               <span class="pb-2 text-sm font-medium text-slate-700">Custom coordinates</span>
@@ -648,7 +652,8 @@
           <h3 class="sr-only">Animation with time series (sa.animate_with_ts)</h3>
           <div class="grid max-w-4xl gap-4">
             <div class="flex flex-wrap items-center gap-4">
-              <label><span><input id="movie-ts-omni" type="checkbox" checked> Plot OMNI</span></label>
+              <label><span><input id="movie-ts-omni" type="checkbox" checked> Plot observations</span></label>
+              <label>Earth observations <select id="movie-ts-insitu-source"><option value="OMNI"{% if default_insitu_source == "OMNI" %} selected{% endif %}>OMNI</option><option value="SWPC"{% if default_insitu_source == "SWPC" %} selected{% endif %}>SWPC real-time L1</option></select></label>
             </div>
             <label class="grid items-center gap-3 sm:grid-cols-[6rem_1fr]">Field
               <select id="movie-ts-field"><option>P_DYN</option><option selected>V</option><option>n</option><option>T</option></select>
@@ -690,6 +695,7 @@
           observer: document.getElementById("timeseries-observer").value,
           plot_omni: document.getElementById("timeseries-plot-omni").checked ? "1" : "0",
           plot_insitu: document.getElementById("timeseries-plot-omni").checked ? "1" : "0",
+          insitu_source: document.getElementById("timeseries-insitu-source").value,
           radius: document.getElementById("plot-radius").value,
           minimal: document.getElementById("map-minimal").checked ? "1" : "0",
           plot_hcs: document.getElementById("map-hcs").checked ? "1" : "0",
@@ -828,6 +834,7 @@
             ? document.getElementById("movie-rmax").value : "",
           field: document.getElementById("movie-ts-field").value,
           plot_omni: withTimeseries && document.getElementById("movie-ts-omni").checked ? "1" : "0",
+          insitu_source: document.getElementById("movie-ts-insitu-source").value,
           inline: "0"
         });
         document.getElementById(withTimeseries ? "movie-ts-output" : "movie-output").value =
@@ -1173,15 +1180,16 @@
         const observer = document.getElementById("timeseries-observer").value;
         if (observer === "Earth") {
           const plotOmni = document.getElementById("timeseries-plot-omni").checked;
+          const insituSource = document.getElementById("timeseries-insitu-source").value;
           const lines = [
-            "# Plot the SURF Earth time series, optionally overlaid with OMNI observations."
+            `# Plot the SURF Earth time series, optionally overlaid with ${insituSource} observations.`
           ];
           if (plotOmni) {
             lines.push(
               "try:",
-              "    sa.plot_earth_timeseries(model, plot_omni=True)",
+              `    sa.plot_earth_timeseries(model, plot_omni=True, insitu_source=${JSON.stringify(insituSource)})`,
               "except Exception:",
-              "    # OMNI may be unavailable for the requested dates.",
+              `    # ${insituSource} may be unavailable for the requested dates.`,
               "    plt.close('all')",
               "    sa.plot_earth_timeseries(model, plot_omni=False)",
             );
@@ -1974,6 +1982,7 @@
     const modelStartInput = document.getElementById("model-start-datetime");
     const omniForecastDatetime = document.getElementById("omni-forecast-datetime");
     const insituMode = document.getElementById("insitu-mode");
+    const insituSpacecraft = document.getElementById("insitu-spacecraft");
     const omniIcmeList = document.getElementById("omni-icme-list");
     const modelCrNumber = document.getElementById("model-cr-number");
     const modelCrLongitude = document.getElementById("model-cr-longitude");
@@ -2016,6 +2025,14 @@
       const forecast = utcInputDate(modelStartInput);
       forecast.setUTCDate(forecast.getUTCDate() + 5);
       omniForecastDatetime.value = forecast.toISOString().slice(0, 19);
+    }
+    let insituSpacecraftManuallySelected = restoredPreRunConfiguration;
+    function syncDefaultInsituSpacecraft() {
+      if (!insituSpacecraft || insituSpacecraftManuallySelected || !omniForecastDatetime?.value) return;
+      const cutoff = new Date();
+      cutoff.setUTCMonth(cutoff.getUTCMonth() - 3);
+      insituSpacecraft.value = utcInputDate(omniForecastDatetime) >= cutoff ? "SWPC" : "OMNI";
+      syncSpacecraftIcmeOptions(true);
     }
     function syncOmniIcmeDefault() {
       if (!omniIcmeList || !modelStartInput.value) return;
@@ -2122,9 +2139,13 @@
     modelStartInput.addEventListener("change", () => {
       clearCmesForStartTimeChange();
       syncOmniForecastTime();
+      syncDefaultInsituSpacecraft();
       updateCoordinates({datetime: modelStartInput.value}).catch(console.error);
     });
-    modelStartInput.addEventListener("input", syncOmniForecastTime);
+    modelStartInput.addEventListener("input", () => {
+      syncOmniForecastTime();
+      syncDefaultInsituSpacecraft();
+    });
     modelStartInput.addEventListener("input", syncOmniIcmeDefault);
     averageBodyLatitude.addEventListener("change", () => updateAverageBodyLatitude().catch(console.error));
     latitudeBody.addEventListener("change", () => updateAverageBodyLatitude().catch(console.error));
@@ -2139,9 +2160,11 @@
     syncSpacecraftIcmeOptions();
     if (!restoredPreRunConfiguration) {
       syncOmniForecastTime();
+      syncDefaultInsituSpacecraft();
       syncOmniIcmeDefault();
     }
-    document.getElementById("insitu-spacecraft")?.addEventListener("change", () => {
+    insituSpacecraft?.addEventListener("change", () => {
+      insituSpacecraftManuallySelected = true;
       syncSpacecraftIcmeOptions(true);
     });
     omniIcmeList?.addEventListener("change", syncIcmeBufferState);
@@ -2314,11 +2337,12 @@
     const timeseriesObserver = document.getElementById("timeseries-observer");
     const timeseriesInsituOption = document.getElementById("timeseries-insitu-option");
     const timeseriesInsituLabel = document.getElementById("timeseries-insitu-label");
+    const timeseriesEarthSource = document.getElementById("timeseries-earth-source");
     const customTimeseriesCoordinates = document.getElementById("timeseries-custom-coordinates");
     function syncTimeseriesLocation() {
       const custom = timeseriesObserver && timeseriesObserver.value === "custom";
       const observationLabels = {
-        Earth: "Plot OMNI",
+        Earth: "Plot observations",
         PSP: "Plot Parker Solar Probe data",
         SOLO: "Plot Solar Orbiter data",
         STA: "Plot STEREO-A data"
@@ -2326,6 +2350,9 @@
       const observationLabel = observationLabels[timeseriesObserver?.value];
       if (timeseriesInsituOption) timeseriesInsituOption.classList.toggle("hidden", !observationLabel);
       if (timeseriesInsituLabel && observationLabel) timeseriesInsituLabel.textContent = observationLabel;
+      if (timeseriesEarthSource) timeseriesEarthSource.classList.toggle(
+        "hidden", timeseriesObserver?.value !== "Earth"
+      );
       if (customTimeseriesCoordinates) {
         customTimeseriesCoordinates.classList.toggle("hidden", !custom);
         customTimeseriesCoordinates.classList.toggle("grid", custom);
