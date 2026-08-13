@@ -589,10 +589,12 @@ def test_generated_omni_functions_pass_selected_icme_list():
         "icme_list": "DONKI",
         "pre_icme_buffer_days": 0.5,
         "post_icme_buffer_days": 2.5,
+        "donki_icme_min_quality": 2,
     }
     code = build_generated_code(simulation)
     assert "icme_list='DONKI'" in code
     assert "pre_icme_buffer=0.5, post_icme_buffer=2.5" in code
+    assert "donki_min_quality=2" in code
     assert "omni_input=omni_input" in code
 
     simulation.ambient = {
@@ -615,7 +617,9 @@ def test_generated_omni_icme_list_has_date_based_default():
     assert "icme_list='CaneRichardson'" in build_generated_code(simulation)
 
     simulation.model["start_datetime"] = "2026-01-01 00:00:00"
-    assert "icme_list='DONKI'" in build_generated_code(simulation)
+    code = build_generated_code(simulation)
+    assert "icme_list='DONKI'" in code
+    assert "donki_min_quality=1" in code
 
 
 def test_grab_donki_at_run_start_uses_runtime_query_and_discards_editor_list():

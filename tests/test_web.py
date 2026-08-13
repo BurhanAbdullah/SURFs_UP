@@ -238,6 +238,8 @@ def test_page_exposes_run_gated_workflow_and_configuration_controls():
     assert b'<option value="forecast">Forecast</option>' in response.data
     assert b'id="omni-forecast-datetime"' in response.data
     assert b'name="omni_icme_list" id="omni-icme-list"' in response.data
+    assert b'name="donki_icme_min_quality" id="donki-icme-min-quality"' in response.data
+    assert b'<option value="1" selected>1 ' in response.data
     assert b'<option value="CaneRichardson">CaneRichardson</option>' in response.data
     assert b'<option value="DONKI">DONKI</option>' in response.data
     assert b'modelStartInput.addEventListener("input", syncOmniIcmeDefault)' in response.data
@@ -349,6 +351,25 @@ def test_model_defaults_to_1d_and_full_longitude_range():
     assert 'name="is_1d" id="model-is-1d" type="checkbox" checked' in template
     assert 'name="lon_min" type="number" value="0"' in template
     assert 'name="lon_max" type="number" value="360"' in template
+
+
+def test_model_offers_optional_body_longitude_clamping():
+    template = Path("surfs_up/web/templates/index.html").read_text(encoding="utf-8")
+
+    assert 'id="clamp-longitude-to-body" type="checkbox"' in template
+    assert 'id="clamp-longitude-to-body" type="checkbox" checked' not in template
+    assert 'id="clamp-longitude-body" disabled' in template
+    assert 'modelIs1D.checked = false' in template
+    assert 'frameSelect.value = "sidereal"' in template
+    assert 'url_for("body_longitude_range")' in template
+    assert 'simtimeInput.addEventListener("change"' in template
+    assert 'modelOuterRadius.value = result.r_max_rs.toFixed(2)' in template
+    assert 'modelRadialSpacing.addEventListener("change"' in template
+    assert 'input.readOnly = enabled' in template
+    assert 'if (runButton) runButton.disabled = true' in template
+    assert '("Uranus","Uranus")' in template
+    assert 'sa.get_horizons_body_for_SURF(' in template
+    assert "naif_code=799, body_name='Uranus'" in template
 
 
 def test_user_specified_sources_are_subtabs():
@@ -712,8 +733,8 @@ def test_donki_feature_selector_is_sent_by_preview():
     assert '<option value="null">Unspecified / null (for early DONKI catalogue use)</option>' in template
     assert template.index('id="donki-feature"') < template.index('id="load-donki"')
     defaults_box = template[
-        template.index("Defaults for DONKI and new manual CMEs"):
-        template.index('id="choose-cone-file"')
+        template.index("CME defaults"):
+        template.index('name="grab_donki_at_run_start"')
     ]
     assert 'id="donki-feature"' not in defaults_box
     assert '&feature=${encodeURIComponent(document.getElementById("donki-feature").value)}' in template
@@ -728,15 +749,54 @@ def test_hydro_manual_cme_defaults_to_sinusoidal_with_unit_plasma_fractions():
     assert '? "sinusoidal"' in template
 
 
-def test_donki_bulk_controls_also_supply_new_manual_cme_defaults():
+def test_cme_defaults_are_at_top_and_apply_to_every_cme():
     template = Path("surfs_up/web/templates/index.html").read_text(encoding="utf-8")
 
-    assert "Defaults for DONKI and new manual CMEs" in template
+    assert "CME defaults" in template
+    assert template.index("CME defaults") < template.index('name="grab_donki_at_run_start"')
+    assert "CME density (p+/cm³)" in template
+    assert "cmÂ³" not in template
     assert 'name="donki_cme_expansion"' in template
     assert 'name="donki_density_fraction"' in template
     assert 'name="donki_cme_temperature_k"' in template
     assert "function cmeDefaults()" in template
-    assert 'if (cme.source === "donki") Object.assign(cme, defaults)' in template
+    assert "function applyDefaultsToAllCmes()" in template
+    assert "cmes.forEach(cme => Object.assign(cme, defaults));" in template
+
+
+def test_selected_cone_file_is_parsed_and_added_to_editor_immediately(monkeypatch):
+    import surfs_up.web.app as web_app
+
+    parsed = [{
+        "longitude": 42.0,
+        "latitude": -5.0,
+        "speed": 900.0,
+        "width": 60.0,
+        "t_launch_day": 0.5,
+        "source": "cone_file",
+    }]
+    monkeypatch.setattr(web_app, "_parse_cone_cmes", lambda path, start: parsed)
+
+    response = create_app({"TESTING": True}).test_client().post(
+        "/cone-cmes",
+        data={
+            "start": "2026-07-03T12:00",
+            "file": (BytesIO(b"cone input"), "cone.in"),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == parsed
+
+    template = Path("surfs_up/web/templates/index.html").read_text(encoding="utf-8")
+    cone_handler = template[
+        template.index('document.getElementById("cone-file").addEventListener'):
+        template.index('document.getElementById("load-donki").addEventListener')
+    ]
+    assert 'fetch({{ url_for("cone_cmes")|tojson }}' in cone_handler
+    assert "loaded.forEach(cme => Object.assign(cme, defaults));" in cone_handler
+    assert "renderCmes();" in cone_handler
+    assert 'event.target.value = "";' in cone_handler
 
 
 def test_model_start_change_clears_every_cme_because_launch_offsets_are_stale():
@@ -1171,6 +1231,35 @@ def test_average_body_latitude_endpoint_uses_requested_interval(monkeypatch):
         "body": "Mars",
         "start": datetime.datetime(2026, 7, 3, 12, 0),
         "duration": 8.5,
+    }
+
+
+def test_body_longitude_range_endpoint_uses_requested_interval(monkeypatch):
+    import surfs_up.web.app as web_app
+
+    captured = {}
+
+    def fake_range(body, start, duration, nlon, dr_rs):
+        captured.update(body=body, start=start, duration=duration, nlon=nlon, dr_rs=dr_rs)
+        return 355.5, 18.25, 246.75
+
+    monkeypatch.setattr(web_app, "_body_model_longitude_range", fake_range)
+    response = create_app({"TESTING": True}).test_client().get(
+        "/body-longitude-range?datetime=2026-07-03T12:00:00&duration=8.5"
+        "&body=PSP&nlon=180&dr_rs=2.5"
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "body": "PSP", "lon_min": 355.5, "lon_max": 18.25,
+        "r_max_rs": 246.75,
+    }
+    assert captured == {
+        "body": "PSP",
+        "start": datetime.datetime(2026, 7, 3, 12, 0),
+        "duration": 8.5,
+        "nlon": 180,
+        "dr_rs": 2.5,
     }
 
 

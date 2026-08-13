@@ -66,6 +66,9 @@ _PLOT_BODY_CHOICES = (
     ("PSP", "Parker Solar Probe"), ("SOLO", "Solar Orbiter"),
     ("ULYSSES", "Ulysses"),
 )
+_URANUS_NAIF_CODE = 799
+_URANUS_NAME = "Uranus"
+_EPHEMERIS_STEP = "12H"
 
 
 def _secret_key() -> str:
@@ -280,6 +283,82 @@ def _average_body_latitude(
     return float(np.mean(coordinates.lat.to_value(u.deg)))
 
 
+def _body_model_longitude_range(
+    body: str, start: datetime.datetime, duration_days: float, nlon: int,
+    dr_rs: float = 1.5,
+) -> tuple[float, float, float]:
+    """Return padded sidereal longitude and radial bounds for an observer."""
+    import numpy as np
+    import astropy.units as u
+    from astropy.time import Time
+    from surf.surf import Observer
+
+    supported = {value for value, _label in _PLOT_BODY_CHOICES if value != "ACE"} | {"URANUS"}
+    body_key = body.strip().upper()
+    if body_key not in supported:
+        raise ValueError(f"Unsupported body: {body}")
+    if not math.isfinite(duration_days) or duration_days <= 0:
+        raise ValueError("Run duration must be positive.")
+    if nlon <= 0:
+        raise ValueError("Longitude grid points must be positive.")
+    if not math.isfinite(dr_rs) or dr_rs <= 0:
+        raise ValueError("Radial grid spacing must be positive.")
+
+    sample_count = max(2, int(math.ceil(duration_days * 4.0)) + 1)
+    offsets = np.linspace(0.0, duration_days, sample_count)
+    times = Time(start) + offsets * u.day
+    if body_key == "URANUS":
+        import surf.surf_analysis as surfA
+
+        horizons = surfA.get_horizons_body_for_SURF(
+            times[0], times[-1], step=_EPHEMERIS_STEP,
+            naif_code=_URANUS_NAIF_CODE, body_name=_URANUS_NAME,
+        )
+        times = Time(horizons["mjd"], format="mjd")
+        observer_heeq_lon = np.asarray(horizons["lon_rad"], dtype=float)
+        observer_radii = np.asarray(horizons["r_rs"], dtype=float)
+    else:
+        observer = Observer(body_key, times)
+        observer_heeq_lon = (observer.lon_hae - Observer("EARTH", times).lon_hae).to_value(u.rad)
+        observer_radii = observer.r.to_value(u.solRad)
+    earth = Observer("EARTH", times)
+
+    # Match surf_analysis.get_observer_timeseries for a sidereal model.
+    earth_model_lon = earth.lon.to_value(u.rad) + (
+        earth.lon_hae - earth.lon_hae[0]
+    ).to_value(u.rad)
+    observer_model_lon = earth_model_lon + observer_heeq_lon
+    unwrapped = np.unwrap(observer_model_lon)
+    if not np.all(np.isfinite(unwrapped)):
+        raise ValueError(f"No ephemeris data are available for {body} over this run.")
+    if not np.all(np.isfinite(observer_radii)):
+        raise ValueError(f"No ephemeris data are available for {body} over this run.")
+    r_max_rs = float(np.max(observer_radii)) + dr_rs
+
+    margin = 360.0 / int(nlon)
+    lower = math.degrees(float(np.min(unwrapped))) - margin
+    upper = math.degrees(float(np.max(unwrapped))) + margin
+    if upper - lower >= 360.0:
+        return 0.0, 360.0, r_max_rs
+    return lower % 360.0, upper % 360.0, r_max_rs
+
+
+def _uranus_timeseries(model):
+    """Sample a solved SURF model along Uranus's JPL Horizons trajectory."""
+    import astropy.units as u
+    import surf.surf_analysis as surfA
+
+    start = model.time_init
+    stop = model.time_init + model.time_out[-1]
+    uranus_pos = surfA.get_horizons_body_for_SURF(
+        start, stop, step=_EPHEMERIS_STEP,
+        naif_code=_URANUS_NAIF_CODE, body_name=_URANUS_NAME,
+    )
+    return surfA.get_SURF_at_position_HEEQ(
+        model, uranus_pos["mjd"], uranus_pos["r_rs"], uranus_pos["lon_rad"]
+    )
+
+
 def _model_defaults() -> dict[str, object]:
     """Return the same time-dependent defaults initialized by the Qt model tab."""
     import astropy.units as u
@@ -437,6 +516,28 @@ def _fetch_donki_cmes(
             }
         )
     # cone_dict_to_cme_list(), used by sin.get_DONKI_cme_list(), sorts by launch time.
+    return sorted(results, key=lambda cme: float(cme["t_launch_day"]))
+
+
+def _parse_cone_cmes(path: Path, model_start: datetime.datetime) -> list[dict[str, object]]:
+    """Normalize a SURF cone2bc input file for the web CME editor."""
+    import surf.surf_inputs as sin
+    from astropy.time import Time
+
+    results = []
+    for cone in sin.import_cone2bc_parameters(str(path)).values():
+        launch = Time(cone["ldates"]).to_datetime().replace(tzinfo=None)
+        results.append(
+            {
+                "longitude": float(cone.get("lon", 0)),
+                "latitude": float(cone.get("lat", 0)),
+                "speed": float(cone.get("vcld", 800)),
+                "width": float(2 * cone.get("rmajor", 30)),
+                "t_launch_day": (launch - model_start).total_seconds() / 86400,
+                "t_launch_datetime": launch.strftime("%Y-%m-%d %H:%M:%S"),
+                "source": "cone_file",
+            }
+        )
     return sorted(results, key=lambda cme: float(cme["t_launch_day"]))
 
 
@@ -964,6 +1065,10 @@ def _request_from_form() -> SimulationRequest:
             raise ValueError("ICME buffers must be zero or greater.")
         ambient["pre_icme_buffer_days"] = pre_icme_buffer_days
         ambient["post_icme_buffer_days"] = post_icme_buffer_days
+        donki_min_quality = int(_float("donki_icme_min_quality", 1))
+        if donki_min_quality not in {-1, 0, 1, 2}:
+            raise ValueError("Minimum DONKI ICME quality must be -1, 0, 1, or 2.")
+        ambient["donki_icme_min_quality"] = donki_min_quality
     elif source == "omni":
         ambient["use_215_inner_boundary"] = "use_215_inner_boundary" in request.form
         ambient["icme_list"] = request.form.get("omni_icme_list", "None")
@@ -973,6 +1078,10 @@ def _request_from_form() -> SimulationRequest:
             raise ValueError("ICME buffers must be zero or greater.")
         ambient["pre_icme_buffer_days"] = pre_icme_buffer_days
         ambient["post_icme_buffer_days"] = post_icme_buffer_days
+        donki_min_quality = int(_float("donki_icme_min_quality", 1))
+        if donki_min_quality not in {-1, 0, 1, 2}:
+            raise ValueError("Minimum DONKI ICME quality must be -1, 0, 1, or 2.")
+        ambient["donki_icme_min_quality"] = donki_min_quality
 
     cmes_text = request.form.get("cmes_json", "").strip()
     cmes = json.loads(cmes_text) if cmes_text else []
@@ -990,20 +1099,13 @@ def _request_from_form() -> SimulationRequest:
     cone_file = request.files.get("cone_file")
     if cone_file and cone_file.filename:
         import numpy as np
-        import surf.surf_inputs as sin
-        from astropy.time import Time
 
         cone_path = _save_uploaded_file(cone_file)
         model_start = datetime.datetime.fromisoformat(start.replace("T", " "))
-        for cone in sin.import_cone2bc_parameters(str(cone_path)).values():
-            launch = Time(cone["ldates"]).to_datetime().replace(tzinfo=None)
+        for cone in _parse_cone_cmes(cone_path, model_start):
             cmes.append(
                 {
-                    "longitude": float(cone.get("lon", 0)),
-                    "latitude": float(cone.get("lat", 0)),
-                    "speed": float(cone.get("vcld", 800)),
-                    "width": float(2 * cone.get("rmajor", 30)),
-                    "t_launch_day": (launch - model_start).total_seconds() / 86400,
+                    **cone,
                     "thickness_rs": 0,
                     "initial_height_rs": 21.5,
                     "cme_expansion": False,
@@ -1148,6 +1250,27 @@ def create_app(config: dict | None = None) -> Flask:
             abort(400, str(error))
         return jsonify({"body": body, "average_latitude": latitude})
 
+    @app.get("/body-longitude-range")
+    def body_longitude_range():
+        """Calculate the sidereal model longitude arc needed for an observer."""
+        try:
+            start = datetime.datetime.fromisoformat(
+                request.args["datetime"].strip().replace("T", " ")
+            )
+            duration_days = float(request.args.get("duration", "10"))
+            nlon = int(request.args.get("nlon", "128"))
+            dr_rs = float(request.args.get("dr_rs", "1.5"))
+            body = request.args.get("body", "Earth").strip()
+            lon_min, lon_max, r_max_rs = _body_model_longitude_range(
+                body, start, duration_days, nlon, dr_rs
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            abort(400, str(error))
+        return jsonify({
+            "body": body, "lon_min": lon_min, "lon_max": lon_max,
+            "r_max_rs": r_max_rs,
+        })
+
     @app.post("/ambient-file-time")
     def ambient_file_time():
         """Infer the start time from a selected ambient file."""
@@ -1170,6 +1293,20 @@ def create_app(config: dict | None = None) -> Flask:
             return jsonify({"code": build_generated_code(simulation)})
         except (DonkiAccessError, json.JSONDecodeError, TypeError, ValueError) as exc:
             abort(400, str(exc))
+
+    @app.post("/cone-cmes")
+    def cone_cmes():
+        """Parse an uploaded cone2bc list for immediate display in the editor."""
+        uploaded = request.files.get("file")
+        if not uploaded or not uploaded.filename:
+            abort(400, "Select a Cone CME list to load.")
+        try:
+            start = datetime.datetime.fromisoformat(
+                request.form["start"].strip().replace("T", " ")
+            )
+            return jsonify(_parse_cone_cmes(_save_uploaded_file(uploaded), start))
+        except (KeyError, TypeError, ValueError) as exc:
+            abort(400, f"Could not read Cone CME list: {exc}")
 
     @app.route("/", methods=["GET", "POST"])
     def index():
@@ -1376,7 +1513,10 @@ def create_app(config: dict | None = None) -> Flask:
                 else:
                     import numpy as np
 
-                    series = sa.get_observer_timeseries(model, observer=observer)
+                    series = (
+                        _uranus_timeseries(model) if observer == "Uranus"
+                        else sa.get_observer_timeseries(model, observer=observer)
+                    )
                     fields = [
                         (key, label)
                         for key, label in (
@@ -1531,7 +1671,10 @@ def create_app(config: dict | None = None) -> Flask:
             longitude = float(request.args.get("timeseries_lon", 0)) * u.deg
             series = sample_custom_timeseries(model, radius, longitude)
         else:
-            series = sa.get_observer_timeseries(model, observer=observer)
+            series = (
+                _uranus_timeseries(model) if observer == "Uranus"
+                else sa.get_observer_timeseries(model, observer=observer)
+            )
 
         if hasattr(series, "copy") and hasattr(series, "columns"):
             surf_frame = series.copy()

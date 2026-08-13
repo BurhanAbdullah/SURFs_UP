@@ -239,8 +239,16 @@
         </select></label>
         <label class="grid gap-1.5"><span class="text-sm font-medium text-slate-700">Frame</span><select name="frame"><option value="synodic">Synodic (recommended for 1D runs)</option><option value="sidereal">Sidereal (recommended for 2D runs)</option></select></label>
       </div>
-      <div class="mt-4 grid items-end gap-3 lg:grid-cols-[minmax(16rem,auto)_1fr]">
-        <label class="pb-2"><span><input name="is_1d" id="model-is-1d" type="checkbox" checked> Run as 1D (single longitude)</span></label>
+      <div class="mt-4 grid items-start gap-4 lg:grid-cols-[minmax(18rem,auto)_1fr]">
+        <div class="grid gap-3">
+          <label><span><input name="is_1d" id="model-is-1d" type="checkbox" checked> Run as 1D (single longitude)</span></label>
+          <div class="grid items-end gap-3 sm:grid-cols-[auto_minmax(10rem,1fr)]">
+            <label class="pb-2"><span><input name="clamp_longitude_to_body" id="clamp-longitude-to-body" type="checkbox"> Clamp longitude to body</span></label>
+            <label class="grid gap-1.5 opacity-50" id="clamp-longitude-body-label"><span class="text-sm font-medium text-slate-700">Body</span><select name="clamp_longitude_body" id="clamp-longitude-body" disabled>
+              {% for value, label in [("Earth","Earth"),("Mercury","Mercury"),("Venus","Venus"),("Mars","Mars"),("Jupiter","Jupiter"),("Saturn","Saturn"),("Uranus","Uranus"),("PSP","Parker Solar Probe"),("SOLO","Solar Orbiter"),("STA","STEREO-A"),("STB","STEREO-B"),("ULYSSES","Ulysses")] %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+            </select></label>
+          </div>
+        </div>
         <div id="model-longitude-row" class="grid items-end gap-3 lg:grid-cols-[auto_1fr_auto_1fr]">
           <span class="pb-2 text-sm font-medium text-slate-600">Longitude range (deg)</span>
           <label><span class="sr-only">Longitude start in degrees</span><input name="lon_min" type="number" value="0"></label>
@@ -335,6 +343,14 @@
             <option value="None">None</option>
             <option value="CaneRichardson">CaneRichardson</option>
             <option value="DONKI">DONKI</option>
+          </select>
+        </label>
+        <label id="donki-icme-quality-field">Minimum DONKI ICME quality
+          <select name="donki_icme_min_quality" id="donki-icme-min-quality">
+            <option value="2">2 — Clear signatures only</option>
+            <option value="1" selected>1 — Lacks some signatures or better</option>
+            <option value="0">0 — Weak signatures or better</option>
+            <option value="-1">−1 — Include unspecified</option>
           </select>
         </label>
         <div class="contents" id="insitu-icme-buffer-fields">
@@ -443,6 +459,22 @@
     <fieldset class="group-box">
       <legend class="group-title px-1">Cone CME lists (typically for model inner boundary at 0.1 AU)</legend>
       <div class="grid gap-4">
+        <fieldset class="rounded-lg border border-slate-200 p-4">
+          <legend class="px-1 text-sm font-semibold text-slate-700">CME defaults</legend>
+          <div class="control-row">
+            <label>Profile type<select name="donki_profile_type" id="donki-profile"><option>square</option><option>sinusoidal</option></select></label>
+            <label>Plasma mode<select name="donki_plasma_mode" id="donki-plasma-mode"><option>Fraction of ambient</option><option>Absolute values</option></select></label>
+            <label>Density fraction<input name="donki_density_fraction" id="donki-density-fraction" type="number" value="1" step="0.1"></label>
+            <label>Temperature fraction<input name="donki_temperature_fraction" id="donki-temperature-fraction" type="number" value="1" step="0.1"></label>
+            <label>CME density (p+/cm³)<input name="donki_cme_density_pcc" id="donki-density" type="number" value="{{ default_cme_density_pcc }}" step="1"></label>
+            <label>CME temperature (K)<input name="donki_cme_temperature_k" id="donki-temperature" type="number" value="{{ default_cme_temperature_k }}" step="1000"></label>
+            <label>Thickness (Rs)<input name="donki_thickness_rs" id="donki-thickness" type="number" value="0" step="0.5"></label>
+            <label>Initial height (Rs)<input name="donki_initial_height_rs" id="donki-initial-height" type="number" value="21.5" step="0.5"></label>
+            <label>Fixed duration (hours)<input name="donki_fixed_duration_hr" id="donki-duration" type="number" value="12" step="0.5"></label>
+            <label><span><input name="donki_cme_expansion" id="donki-expansion" type="checkbox"> Expansion</span></label>
+            <label><span><input name="donki_cme_fixed_duration" id="donki-fixed-duration" type="checkbox" checked> Fixed duration</span></label>
+          </div>
+        </fieldset>
         <label>
           <span><input name="grab_donki_at_run_start" type="checkbox" checked>
             Grab DONKI CMEs at run start</span>
@@ -452,22 +484,6 @@
           <button type="button" id="load-donki">Grab the DONKI CMEs now</button>
           <p id="donki-status" class="text-sm text-slate-500">Uses the current model start and run duration.</p>
         </div>
-        <fieldset class="rounded-lg border border-slate-200 p-4">
-          <legend class="px-1 text-sm font-semibold text-slate-700">Defaults for DONKI and new manual CMEs</legend>
-          <div class="control-row">
-            <label>Profile type<select name="donki_profile_type" id="donki-profile"><option>square</option><option>sinusoidal</option></select></label>
-            <label>Plasma mode<select name="donki_plasma_mode" id="donki-plasma-mode"><option>Fraction of ambient</option><option>Absolute values</option></select></label>
-            <label>Density fraction<input name="donki_density_fraction" id="donki-density-fraction" type="number" value="1" step="0.1"></label>
-            <label>Temperature fraction<input name="donki_temperature_fraction" id="donki-temperature-fraction" type="number" value="1" step="0.1"></label>
-            <label>CME density (p+/cmÂ³)<input name="donki_cme_density_pcc" id="donki-density" type="number" value="{{ default_cme_density_pcc }}" step="1"></label>
-            <label>CME temperature (K)<input name="donki_cme_temperature_k" id="donki-temperature" type="number" value="{{ default_cme_temperature_k }}" step="1000"></label>
-            <label>Thickness (Rs)<input name="donki_thickness_rs" id="donki-thickness" type="number" value="0" step="0.5"></label>
-            <label>Initial height (Rs)<input name="donki_initial_height_rs" id="donki-initial-height" type="number" value="21.5" step="0.5"></label>
-            <label>Fixed duration (hours)<input name="donki_fixed_duration_hr" id="donki-duration" type="number" value="12" step="0.5"></label>
-            <label><span><input name="donki_cme_expansion" id="donki-expansion" type="checkbox"> Expansion</span></label>
-            <label><span><input name="donki_cme_fixed_duration" id="donki-fixed-duration" type="checkbox" checked> Fixed duration</span></label>
-          </div>
-        </fieldset>
         <div class="grid items-center gap-3 sm:grid-cols-[auto_1fr]">
           <button type="button" id="choose-cone-file">Load a user-supplied Cone CME list</button>
           <input name="cone_file" id="cone-file" class="hidden" type="file" accept=".in">
@@ -585,7 +601,7 @@
               <label for="timeseries-observer" class="text-sm font-medium text-slate-700">Location</label>
               <select id="timeseries-observer">
                 {% for value, label in [("Earth","Earth"),("Mercury","Mercury"),("Venus","Venus"),
-                  ("Mars","Mars"),("Jupiter","Jupiter"),("Saturn","Saturn"),
+                  ("Mars","Mars"),("Jupiter","Jupiter"),("Saturn","Saturn"),("Uranus","Uranus"),
                   ("PSP","Parker Solar Probe"),("SOLO","Solar Orbiter"),("STA","STEREO-A"),
                   ("STB","STEREO-B"),("ULYSSES","Ulysses"),("custom","Custom coordinates")] %}
                 <option value="{{ value }}">{{ label }}</option>{% endfor %}
@@ -1216,8 +1232,21 @@
         }
         const lines = [
           "# Sample the moving observer and plot the available model variables.",
-          `time_series = sa.get_observer_timeseries(model, observer=${JSON.stringify(observer)})`,
         ];
+        if (observer === "Uranus") {
+          lines.push(
+            "t_start_astro = model.time_init",
+            "t_stop_astro = model.time_init + model.time_out[-1]",
+            "uranus_pos = sa.get_horizons_body_for_SURF(",
+            "    t_start_astro, t_stop_astro, step='12H', naif_code=799, body_name='Uranus'",
+            ")",
+            "time_series = sa.get_SURF_at_position_HEEQ(",
+            "    model, uranus_pos['mjd'], uranus_pos['r_rs'], uranus_pos['lon_rad']",
+            ")",
+          );
+        } else {
+          lines.push(`time_series = sa.get_observer_timeseries(model, observer=${JSON.stringify(observer)})`);
+        }
         const observationGrabbers = {
           PSP: "get_psp",
           SOLO: "get_solo",
@@ -1625,11 +1654,9 @@
         cme_temperature_k: numberValue("donki-temperature")
       };
     }
-    function applyDefaultsToDonkiCmes() {
+    function applyDefaultsToAllCmes() {
       const defaults = cmeDefaults();
-      cmes.forEach(cme => {
-        if (cme.source === "donki") Object.assign(cme, defaults);
-      });
+      cmes.forEach(cme => Object.assign(cme, defaults));
       renderCmes();
     }
     function renderCmes() {
@@ -1753,11 +1780,37 @@
     document.getElementById("choose-cone-file").addEventListener(
       "click", () => document.getElementById("cone-file").click()
     );
-    document.getElementById("cone-file").addEventListener("change", event => {
+    document.getElementById("cone-file").addEventListener("change", async event => {
       const file = event.target.files[0];
-      if (file) grabDonkiAtRunStart.checked = false;
-      document.getElementById("cone-file-status").textContent =
-        file ? `Selected ${file.name}; CMEs will load when the model is run.` : "No cone file loaded.";
+      const status = document.getElementById("cone-file-status");
+      if (!file) {
+        status.textContent = "No cone file loaded.";
+        return;
+      }
+      status.textContent = `Loading ${file.name}…`;
+      const data = new FormData();
+      data.set("file", file);
+      data.set("start", modelStartInput.value);
+      try {
+        const response = await fetch({{ url_for("cone_cmes")|tojson }}, {
+          method: "POST",
+          body: data
+        });
+        if (!response.ok) throw new Error(await response.text());
+        const loaded = await response.json();
+        const retained = cmes.filter(cme => cme.source !== "cone_file");
+        const defaults = cmeDefaults();
+        loaded.forEach(cme => Object.assign(cme, defaults));
+        cmes.splice(0, cmes.length, ...retained, ...loaded);
+        selectedCmeIndex = -1;
+        grabDonkiAtRunStart.checked = false;
+        renderCmes();
+        status.textContent = `Loaded ${loaded.length} cone CME(s) from ${file.name}.`;
+        event.target.value = "";
+        invalidateCompletedRun();
+      } catch (error) {
+        status.textContent = `Could not load ${file.name}: ${error.message}`;
+      }
     });
     document.getElementById("load-donki").addEventListener("click", async event => {
       const button = event.currentTarget;
@@ -1973,6 +2026,7 @@
         applyConfiguration(JSON.parse(await configurationFile.files[0].text()));
         syncSpacecraftIcmeOptions();
         syncLongitudeControls();
+        updateBodyLongitudeRange().catch(console.error);
         sessionStorage.removeItem("surfs-up-current-configuration");
       } catch (error) {
         alert(error.message);
@@ -1994,6 +2048,11 @@
     const modelLongitudeRow = document.getElementById("model-longitude-row");
     const modelLongitudeStart = document.querySelector('[name="lon_min"]');
     const modelLongitudeStop = document.querySelector('[name="lon_max"]');
+    const modelOuterRadius = document.querySelector('[name="rmax"]');
+    const modelRadialSpacing = document.querySelector('[name="dr_rs"]');
+    const clampLongitudeToBody = document.getElementById("clamp-longitude-to-body");
+    const clampLongitudeBody = document.getElementById("clamp-longitude-body");
+    const clampLongitudeBodyLabel = document.getElementById("clamp-longitude-body-label");
     const iswaMapDate = document.getElementById("iswa-map-date");
     const iswaUseModelStart = document.getElementById("iswa-use-model-start");
     const cmeLaunchDay = document.getElementById("cme-launch-day");
@@ -2072,6 +2131,11 @@
       const disabled = omniIcmeList?.value === "None";
       fields?.querySelectorAll("input").forEach(input => input.disabled = disabled);
       fields?.classList.toggle("opacity-50", disabled);
+      const qualityField = document.getElementById("donki-icme-quality-field");
+      const qualitySelect = document.getElementById("donki-icme-min-quality");
+      const qualityDisabled = omniIcmeList?.value !== "DONKI";
+      if (qualitySelect) qualitySelect.disabled = qualityDisabled;
+      qualityField?.classList.toggle("opacity-50", qualityDisabled);
     }
     function syncOmniForecastTimeState() {
       if (!omniForecastDatetime || !insituMode) return;
@@ -2093,6 +2157,47 @@
         modelLongitudeRow.classList.toggle("pointer-events-none", disabled);
       }
     }
+    let longitudeClampRequest = 0;
+    async function updateBodyLongitudeRange() {
+      const enabled = Boolean(clampLongitudeToBody?.checked);
+      if (clampLongitudeBody) clampLongitudeBody.disabled = !enabled;
+      clampLongitudeBodyLabel?.classList.toggle("opacity-50", !enabled);
+      [modelLongitudeStart, modelLongitudeStop, modelOuterRadius].forEach(input => {
+        if (input) input.readOnly = enabled;
+      });
+      if (!enabled) {
+        syncLongitudeControls();
+        return;
+      }
+      modelIs1D.checked = false;
+      frameSelect.value = "sidereal";
+      syncLongitudeControls();
+      if (!modelStartInput.value || !(Number(simulationDuration.value) > 0)) return;
+      const requestNumber = ++longitudeClampRequest;
+      const runButton = document.getElementById("run-surf-button");
+      if (runButton) runButton.disabled = true;
+      const parameters = new URLSearchParams({
+        datetime: modelStartInput.value,
+        duration: simulationDuration.value,
+        body: clampLongitudeBody.value,
+        nlon: document.querySelector('[name="nlon"]').value,
+        dr_rs: modelRadialSpacing.value
+      });
+      try {
+        const response = await fetch(`{{ url_for("body_longitude_range") }}?${parameters}`);
+        if (!response.ok) throw new Error(await response.text());
+        const result = await response.json();
+        if (requestNumber === longitudeClampRequest && clampLongitudeToBody.checked) {
+          modelLongitudeStart.value = result.lon_min.toFixed(2);
+          modelLongitudeStop.value = result.lon_max.toFixed(2);
+          modelOuterRadius.value = result.r_max_rs.toFixed(2);
+        }
+      } finally {
+        if (runButton && requestNumber === longitudeClampRequest && !runInProgress) {
+          runButton.disabled = false;
+        }
+      }
+    }
     async function updateCoordinates(parameters) {
       const response = await fetch(`{{ url_for("model_coordinates") }}?${new URLSearchParams(parameters)}`);
       if (!response.ok) throw new Error(await response.text());
@@ -2109,6 +2214,7 @@
       syncOmniForecastTime();
       syncOmniIcmeDefault();
       clearCmesForStartTimeChange();
+      await updateBodyLongitudeRange();
     }
     let averageLatitudeRequest = 0;
     async function updateAverageBodyLatitude() {
@@ -2322,6 +2428,7 @@
       }
       clearStaleDonkiCmes();
       renderCmes();
+      updateBodyLongitudeRange().catch(console.error);
     });
 
     [
@@ -2424,7 +2531,7 @@
     const streakSpacing = document.querySelector('[name="streak_spacing_deg"]');
     const donkiDefaultControls = document.querySelectorAll('[name^="donki_"]');
     donkiDefaultControls.forEach(control => {
-      control.addEventListener("change", applyDefaultsToDonkiCmes);
+      control.addEventListener("change", applyDefaultsToAllCmes);
     });
     function syncMovieHcsControls(defaultToChecked = false) {
       const available = Boolean(includeBpolToggle && includeBpolToggle.checked);
@@ -2464,13 +2571,30 @@
       }
       syncMovieHcsControls();
     }
-    oneDimensionalToggle.addEventListener("change", () => syncModelDependentControls(true));
+    oneDimensionalToggle.addEventListener("change", () => {
+      if (oneDimensionalToggle.checked && clampLongitudeToBody.checked) {
+        clampLongitudeToBody.checked = false;
+        updateBodyLongitudeRange().catch(console.error);
+      }
+      syncModelDependentControls(true);
+    });
+    clampLongitudeToBody.addEventListener("change", () => {
+      updateBodyLongitudeRange().then(() => syncModelDependentControls()).catch(console.error);
+    });
+    clampLongitudeBody.addEventListener("change", () => updateBodyLongitudeRange().catch(console.error));
+    frameSelect.addEventListener("change", () => {
+      if (clampLongitudeToBody.checked && frameSelect.value !== "sidereal") {
+        frameSelect.value = "sidereal";
+      }
+    });
+    document.querySelector('[name="nlon"]').addEventListener("change", () => updateBodyLongitudeRange().catch(console.error));
+    modelRadialSpacing.addEventListener("change", () => updateBodyLongitudeRange().catch(console.error));
     solverSelect.addEventListener("change", () => {
       syncModelDependentControls();
       document.getElementById("donki-profile").value =
         document.querySelector('[name="solver"]').value === "hydro"
           ? "sinusoidal" : "square";
-      applyDefaultsToDonkiCmes();
+      applyDefaultsToAllCmes();
     });
     if (includeBpolToggle) {
       includeBpolToggle.addEventListener("change", () => {
@@ -2479,6 +2603,7 @@
     }
     streakToggle.addEventListener("change", syncModelDependentControls);
     syncModelDependentControls();
+    updateBodyLongitudeRange().catch(console.error);
   </script>
   </main>
 </body>
