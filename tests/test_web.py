@@ -259,6 +259,15 @@ def test_page_exposes_run_gated_workflow_and_configuration_controls():
     assert b'const modelGammaInput = document.getElementById("model-gamma")' in response.data
 
 
+def test_ambient_forecast_time_updates_model_start_to_five_days_prior():
+    template = Path("surfs_up/web/templates/index.html").read_text(encoding="utf-8")
+
+    assert 'function syncModelStartFromOmniForecastTime()' in template
+    assert 'modelStart.setUTCDate(modelStart.getUTCDate() - 5)' in template
+    assert 'modelStartInput.dispatchEvent(new Event("change", {bubbles: true}))' in template
+    assert 'omniForecastDatetime?.addEventListener("change", syncModelStartFromOmniForecastTime)' in template
+
+
 def test_template_turns_off_donki_for_omni_outward_selection():
     template = Path("surfs_up/web/templates/index.html").read_text(encoding="utf-8")
 
@@ -322,6 +331,8 @@ def test_csv_export_prompts_for_filename_without_output_box():
     assert '"SOLO": ("get_solo", "SOLO")' in app_source
     assert '"STA": ("get_stereo_a", "STA")' in app_source
     assert 'surf_frame = pd.merge(' in app_source
+    assert 'pd.Timestamp(value).isoformat()' in app_source
+    assert 'pd.to_timedelta(surf_frame["time"], unit="D")' in app_source
     assert 'csv_text = surf_frame.to_csv(index=False)' in app_source
     assert "link.download = filename" in template
 
@@ -368,8 +379,10 @@ def test_model_offers_optional_body_longitude_clamping():
     assert 'input.readOnly = enabled' in template
     assert 'if (runButton) runButton.disabled = true' in template
     assert '("Uranus","Uranus")' in template
+    assert '("NEW_HORIZONS","New Horizons")' in template
     assert 'sa.get_horizons_body_for_SURF(' in template
-    assert "naif_code=799, body_name='Uranus'" in template
+    assert 'code: 799, name: "Uranus"' in template
+    assert 'code: -98, name: "New Horizons"' in template
 
 
 def test_user_specified_sources_are_subtabs():
@@ -745,8 +758,20 @@ def test_hydro_manual_cme_defaults_to_sinusoidal_with_unit_plasma_fractions():
 
     assert 'id="cme-density-fraction" type="number" value="1"' in template
     assert 'id="cme-temperature-fraction" type="number" value="1"' in template
-    assert "document.querySelector('[name=\"solver\"]').value === \"hydro\"" in template
+    assert '["hydro", "hydro-pui"].includes(document.querySelector(\'[name="solver"]\').value)' in template
     assert '? "sinusoidal"' in template
+
+
+def test_web_surfaces_pui_solver_variants():
+    template = Path("surfs_up/web/templates/index.html").read_text(encoding="utf-8")
+
+    assert '<option value="huxt-pui">HUXt + PUI</option>' in template
+    assert '<option value="hydro-pui">hydro + PUI</option>' in template
+    assert 'value="hydro-pcm"' not in template
+    assert 'value="hydro-pcm-pui"' not in template
+    assert template.index('value="hydro"') < template.index('value="huxt-pui"')
+    assert '!solverSelect.value.startsWith("huxt")' in template
+    assert 'solverSelect.value.startsWith("huxt") && option.value !== "V"' in template
 
 
 def test_cme_defaults_are_at_top_and_apply_to_every_cme():
@@ -1234,6 +1259,23 @@ def test_average_body_latitude_endpoint_uses_requested_interval(monkeypatch):
     }
 
 
+def test_average_body_latitude_endpoint_preserves_spacecraft_name(monkeypatch):
+    import surfs_up.web.app as web_app
+
+    captured = {}
+    monkeypatch.setattr(
+        web_app, "_average_body_latitude",
+        lambda body, start, duration: captured.setdefault("body", body) or 2.0,
+    )
+    response = create_app({"TESTING": True}).test_client().get(
+        "/average-body-latitude?datetime=2026-07-03T12:00:00&duration=2&body=STEREO-A"
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["body"] == "STEREO-A"
+    assert captured["body"] == "STEREO-A"
+
+
 def test_body_longitude_range_endpoint_uses_requested_interval(monkeypatch):
     import surfs_up.web.app as web_app
 
@@ -1272,6 +1314,31 @@ def test_model_latitude_offers_average_body_control():
     assert 'if (event.isTrusted && averageBodyLatitude.checked)' in template
     assert '>Model latitude</span><input class="w-full min-w-0"' in template
     assert 'modelLatitude.dispatchEvent(new Event("input"' not in template
+    assert '["STEREO-A", "STEREO-B", "Parker Solar Probe", "Solar Orbiter"]' in template
+    assert '<option data-spacecraft="true" disabled>{{ body }}</option>' in template
+    assert 'url_for("latitude_body_choices")' in template
+    assert 'option.disabled = !available.has(option.value)' in template
+
+
+def test_latitude_body_choices_are_limited_by_ephemeris_dates(monkeypatch):
+    import surfs_up.web.app as web_app
+
+    captured = {}
+
+    def fake_available(start, duration):
+        captured.update(start=start, duration=duration)
+        return ["STEREO-A", "Solar Orbiter"]
+
+    monkeypatch.setattr(web_app, "_available_average_latitude_spacecraft", fake_available)
+    response = create_app({"TESTING": True}).test_client().get(
+        "/latitude-body-choices?datetime=2026-07-03T12:00:00&duration=8.5"
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"spacecraft": ["STEREO-A", "Solar Orbiter"]}
+    assert captured == {
+        "start": datetime.datetime(2026, 7, 3, 12, 0), "duration": 8.5
+    }
 
 
 def test_model_defaults_to_earth_average_latitude(monkeypatch):
@@ -1351,6 +1418,27 @@ def test_available_plot_bodies_omit_observers_outside_outer_boundary():
     assert web_app._available_plot_body_choices(Model()) == (
         ("EARTH", "Earth"),
         ("ACE", "ACE"),
+    )
+
+
+def test_new_horizons_plot_choice_requires_outer_boundary_past_20_au():
+    import astropy.units as u
+    import numpy as np
+    import surfs_up.web.app as web_app
+
+    class Model:
+        def __init__(self, outer_radius):
+            self.r = np.array([21.5, outer_radius]) * u.solRad
+
+        def get_observer(self, body):
+            raise ValueError(body)
+
+    below = (20 * u.AU).to_value(u.solRad)
+    assert ("NEW_HORIZONS", "New Horizons") not in web_app._available_plot_body_choices(
+        Model(below)
+    )
+    assert ("NEW_HORIZONS", "New Horizons") in web_app._available_plot_body_choices(
+        Model(below + 1)
     )
 
 

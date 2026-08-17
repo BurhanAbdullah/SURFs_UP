@@ -154,6 +154,21 @@ def test_uniform_generator_sets_gamma_for_non_huxt_solver():
     assert "model.set_gamma(1.42)" in code
 
 
+def test_uniform_generator_routes_pui_solver_families():
+    huxt_simulation = request()
+    huxt_simulation.model["solver"] = "huxt-pui"
+    huxt_code = build_uniform_boundary_code(huxt_simulation)
+    assert "solver='huxt-pui'" in huxt_code
+    assert "model.set_gamma" not in huxt_code
+
+    hydro_simulation = request()
+    hydro_simulation.model["solver"] = "hydro-pui"
+    hydro_simulation.model["gamma"] = 1.42
+    hydro_code = build_uniform_boundary_code(hydro_simulation)
+    assert "solver='hydro-pui'" in hydro_code
+    assert "model.set_gamma(1.42)" in hydro_code
+
+
 def test_runner_reports_immediately_before_model_solve():
     code = """
 print("prepared")
@@ -400,7 +415,7 @@ def test_generated_code_supports_wsa_iswa():
     assert "get_WSA_from_ISWA(iswa_map_time)" in code
     assert "get_WSA_long_profile(wsa_path" in code
     assert "map_v_inwards" in code
-    assert "acc_profile = 'huxt' if solver == 'huxt' else 'parker'" in code
+    assert "acc_profile = 'huxt' if solver.startswith('huxt') else 'parker'" in code
     assert "acc_profile=acc_profile" in code
     assert code.index("map_v_inwards") < code.index("map_v_boundary_inwards")
 
@@ -433,7 +448,7 @@ def test_generated_code_uses_parker_wsa_reduction_for_non_huxt():
     code = build_generated_code(simulation)
 
     compile(code, "<generated>", "exec")
-    assert "if solver == 'huxt':" in code
+    assert "if solver.startswith('huxt'):" in code
     assert "gamma = 1.4" in code
     assert "sin.map_v_inwards_parker" in code
     assert "v_boundary, 215*u.solRad, wsa_lon, rmin, gamma=gamma" in code

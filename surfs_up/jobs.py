@@ -19,6 +19,10 @@ JOB_DIR = Path(
 )
 
 
+class JobCancelled(RuntimeError):
+    """Raised inside the worker when a newer run supersedes a job."""
+
+
 def _job_path(job_id: str) -> Path:
     if not job_id.isalnum():
         raise ValueError("Invalid job ID")
@@ -41,6 +45,7 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
 
 def enqueue(simulation: SimulationRequest, owner_session_id: str) -> str:
     """Persist a validated job and make it visible to the worker."""
+    cancel_jobs_for_owner(owner_session_id)
     job_id = uuid.uuid4().hex
     now = time.time()
     status = {
@@ -59,6 +64,63 @@ def enqueue(simulation: SimulationRequest, owner_session_id: str) -> str:
     _write_json(_job_path(job_id), status)
     _write_json(_queue_path(job_id), payload)
     return job_id
+
+
+def cancel_jobs_for_owner(owner_session_id: str) -> None:
+    """Cancel unfinished jobs previously submitted by one browser session."""
+    if not JOB_DIR.exists():
+        return
+    for status_path in JOB_DIR.glob("*.json"):
+        try:
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if (
+            status.get("owner_session_id") != owner_session_id
+            or status.get("state") not in {"pending", "running"}
+        ):
+            continue
+        job_id = str(status.get("id", status_path.stem))
+        # Removing a pending payload prevents it from ever being claimed. A
+        # working payload may already be loaded, so the worker also checks the
+        # cancellation flag at each safe progress boundary.
+        _queue_path(job_id).unlink(missing_ok=True)
+        update_status(
+            job_id,
+            state="failed",
+            message="Cancelled because a newer run was submitted",
+            output="",
+            cancel_requested=True,
+        )
+
+
+def cancel_all_unfinished_jobs(message: str = "Cancelled when the local app restarted") -> None:
+    """Discard unfinished work when no worker can still be executing it."""
+    if not JOB_DIR.exists():
+        return
+    for status_path in JOB_DIR.glob("*.json"):
+        try:
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if status.get("state") not in {"pending", "running"}:
+            continue
+        job_id = str(status.get("id", status_path.stem))
+        _queue_path(job_id).unlink(missing_ok=True)
+        _queue_path(job_id, "working").unlink(missing_ok=True)
+        update_status(
+            job_id,
+            state="failed",
+            message=message,
+            output="",
+            cancel_requested=True,
+        )
+
+
+def _raise_if_cancelled(job_id: str) -> None:
+    status = read_status(job_id)
+    if status is not None and status.get("cancel_requested"):
+        raise JobCancelled
 
 
 def read_status(job_id: str) -> dict[str, Any] | None:
@@ -109,18 +171,24 @@ def process_one() -> bool:
             simulation_data.get("cmes"),
         )
         code = build_generated_code(simulation)
+        _raise_if_cancelled(job_id)
         update_status(job_id, state="running", message="Grabbing and processing input data")
         result = run_generated_code(
             code,
-            before_solve=lambda: update_status(
-                job_id, state="running", message="Running SURF"
-            ),
-            on_chunk=lambda current, total: update_status(
-                job_id,
-                state="running",
-                message=f"Running SURF — chunk {current} of {total}",
-            ),
+            before_solve=lambda: (
+                _raise_if_cancelled(job_id),
+                update_status(job_id, state="running", message="Running SURF"),
+            )[-1],
+            on_chunk=lambda current, total: (
+                _raise_if_cancelled(job_id),
+                update_status(
+                    job_id,
+                    state="running",
+                    message=f"Running SURF — chunk {current} of {total}",
+                ),
+            )[-1],
         )
+        _raise_if_cancelled(job_id)
         if result.success and result.model is not None:
             # Imported lazily to avoid loading the Flask adapter in queue-only callers.
             from surfs_up.web.app import _write_run_cache
@@ -146,6 +214,14 @@ def process_one() -> bool:
                 message=result.message,
                 output=result.output,
             )
+    except JobCancelled:
+        update_status(
+            job_id,
+            state="failed",
+            message="Cancelled because a newer run was submitted",
+            output="",
+            cancel_requested=True,
+        )
     except Exception as exc:
         import traceback
 
@@ -169,6 +245,10 @@ def _recover_interrupted_jobs() -> None:
     pending_dir.mkdir(parents=True, exist_ok=True)
     for working in working_dir.glob("*.json"):
         try:
+            status = read_status(working.stem)
+            if status is not None and status.get("cancel_requested"):
+                working.unlink(missing_ok=True)
+                continue
             working.replace(pending_dir / working.name)
             update_status(
                 working.stem,

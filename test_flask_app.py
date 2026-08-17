@@ -6,7 +6,7 @@ import threading
 import webbrowser
 
 from surfs_up.web import create_app
-from surfs_up.jobs import run_worker
+from surfs_up.jobs import cancel_all_unfinished_jobs, run_worker
 
 
 HOST = "127.0.0.1"
@@ -21,6 +21,7 @@ def open_browser() -> None:
 def main() -> None:
     """Start the Flask development server and display it in a browser."""
     app = create_app({"TESTING": True, "RUN_JOBS_SYNCHRONOUS": False})
+    cancel_all_unfinished_jobs()
     threading.Thread(target=run_worker, daemon=True, name="surfs-up-worker").start()
     threading.Timer(1.0, open_browser).start()
     app.run(host=HOST, port=PORT, debug=True, use_reloader=False)

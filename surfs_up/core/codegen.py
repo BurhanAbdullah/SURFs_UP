@@ -11,6 +11,10 @@ def _dt_scale(state: dict) -> int:
     return int(state.get("dt_scale", default))
 
 
+def _is_huxt_solver(solver: str) -> bool:
+    return str(solver).lower().startswith("huxt")
+
+
 def _omni_icme_list(state: dict, ambient: dict) -> str | None:
     """Return the selected ICME catalogue, including a date-based legacy default."""
     if "icme_list" in ambient:
@@ -100,7 +104,7 @@ def build_uniform_boundary_code(request: SimulationRequest) -> str:
         ")",
         ]
     )
-    if solver != "huxt":
+    if not _is_huxt_solver(solver):
         lines.extend([f"model.set_gamma({float(state.get('gamma', 1.5))})", ""])
     else:
         lines.append("")
@@ -118,7 +122,7 @@ def build_uniform_boundary_code(request: SimulationRequest) -> str:
 def _wsa_speed_reduction_lines() -> list[str]:
     return [
         "wsa_lon = np.linspace(0, 2*np.pi, len(v_boundary), endpoint=False)*u.rad",
-        "if solver == 'huxt':",
+        "if solver.startswith('huxt'):",
         "    wsa_reduction = sin.map_v_inwards(",
         "        v_boundary, 215*u.solRad, wsa_lon, rmin",
         "    )",
@@ -160,7 +164,7 @@ def build_generated_code(request: SimulationRequest) -> str:
         "",
         "# Define settings shared by the boundary preparation and model setup.",
         f"solver = {solver!r}",
-        "acc_profile = 'huxt' if solver == 'huxt' else 'parker'",
+        "acc_profile = 'huxt' if solver.startswith('huxt') else 'parker'",
         f"rmin = {float(state['rmin'])} * u.solRad",
         f"rmax = {float(state['rmax'])} * u.solRad",
         f"latitude = {float(state['latitude'])} * u.deg",
@@ -169,7 +173,7 @@ def build_generated_code(request: SimulationRequest) -> str:
         "",
         "# Prepare the selected ambient solar-wind boundary.",
     ]
-    if solver != "huxt":
+    if not _is_huxt_solver(solver):
         lines.insert(-2, f"gamma = {gamma}")
     source = ambient["source"]
     include_bpol = bool(state.get("include_bpol"))
@@ -196,7 +200,7 @@ def build_generated_code(request: SimulationRequest) -> str:
             )
         if ambient.get("decelerate_to_inner_boundary", True):
             call = f"sin.map_v_boundary_inwards(v_boundary, {source_radius_rs}*u.solRad, rmin, acc_profile=acc_profile"
-            call += ", gamma=gamma" if solver != "huxt" else ""
+            call += ", gamma=gamma" if not _is_huxt_solver(solver) else ""
             call += ", b_orig=b_boundary)" if include_bpol else ")"
             lines.append(("v_boundary, b_boundary = " if include_bpol else "v_boundary = ") + call)
     elif source == "wsa":
@@ -212,7 +216,7 @@ def build_generated_code(request: SimulationRequest) -> str:
             lines.extend(_wsa_speed_reduction_lines())
         if ambient.get("decelerate_to_inner_boundary", True):
             call = f"sin.map_v_boundary_inwards(v_boundary, {source_radius_rs}*u.solRad, rmin, acc_profile=acc_profile"
-            call += ", gamma=gamma" if solver != "huxt" else ""
+            call += ", gamma=gamma" if not _is_huxt_solver(solver) else ""
             call += ", b_orig=b_boundary)" if include_bpol else ")"
             lhs = "v_boundary, b_boundary = " if include_bpol else "v_boundary = "
             lines.append(lhs + call)
@@ -230,7 +234,7 @@ def build_generated_code(request: SimulationRequest) -> str:
             lines.extend(_wsa_speed_reduction_lines())
         if ambient.get("decelerate_to_inner_boundary", True):
             call = f"sin.map_v_boundary_inwards(v_boundary, {source_radius_rs}*u.solRad, rmin, acc_profile=acc_profile"
-            call += ", gamma=gamma" if solver != "huxt" else ""
+            call += ", gamma=gamma" if not _is_huxt_solver(solver) else ""
             call += ", b_orig=b_boundary)" if include_bpol else ")"
             lhs = "v_boundary, b_boundary = " if include_bpol else "v_boundary = "
             lines.append(lhs + call)
@@ -240,7 +244,7 @@ def build_generated_code(request: SimulationRequest) -> str:
             f"v_boundary = sin.get_CorTom_long_profile(r{ambient['filepath']!r}, latitude)"
         )
         if ambient.get("decelerate_to_inner_boundary", True):
-            gamma_arg = ", gamma=gamma" if solver != "huxt" else ""
+            gamma_arg = ", gamma=gamma" if not _is_huxt_solver(solver) else ""
             lines.append(
                 "v_boundary = sin.map_v_boundary_inwards("
                 f"v_boundary, {source_radius_rs}*u.solRad, rmin, acc_profile=acc_profile{gamma_arg})"
@@ -321,7 +325,7 @@ def build_generated_code(request: SimulationRequest) -> str:
                 if spacecraft in {"OMNI", "SWPC"}
                 else ""
             )
-            gamma_arg = ", gamma=gamma" if solver != "huxt" else ""
+            gamma_arg = ", gamma=gamma" if not _is_huxt_solver(solver) else ""
             lines.extend(
                 [
                     f"model = sinsit.{fn}({call_start}, {second}, rmin=rmin, rmax=rmax, "
@@ -380,7 +384,7 @@ def build_generated_code(request: SimulationRequest) -> str:
                 wrapper_icme_list = "None"
             if ambient.get("use_215_inner_boundary", True):
                 longitude_args = ""
-                gamma_arg = ", gamma=gamma" if solver != "huxt" else ""
+                gamma_arg = ", gamma=gamma" if not _is_huxt_solver(solver) else ""
                 omni_input_arg = ", omni_input=omni_input"
                 if not state.get("is_1d", False):
                     longitude_args = (
@@ -402,7 +406,7 @@ def build_generated_code(request: SimulationRequest) -> str:
                     f"{longitude_args})"
                 )
             else:
-                gamma_arg = ", gamma=gamma" if solver != "huxt" else ""
+                gamma_arg = ", gamma=gamma" if not _is_huxt_solver(solver) else ""
                 lines.extend(
                     [
                     "time_grid, vcarr, bcarr = sinsit.generate_vCarr_from_OMNI("
@@ -463,7 +467,7 @@ def build_generated_code(request: SimulationRequest) -> str:
     # ephemeris must not silently turn this into NaN and exclude every cone CME.
     # SURF's boundary injector consumes model.latitude.value as radians.
     lines.extend(["", "model.latitude = latitude.to(u.rad)"])
-    if solver != "huxt" and source not in {"insitu_backmapped", "omni"}:
+    if not _is_huxt_solver(solver) and source not in {"insitu_backmapped", "omni"}:
         lines.append("model.set_gamma(gamma)")
 
     lines.extend(
@@ -490,7 +494,7 @@ def build_generated_code(request: SimulationRequest) -> str:
                 "    raise RuntimeError('DONKI CME data could not be accessed') from exc",
                 "print(f'Loaded {len(donki_cmes)} DONKI cone CMEs for this run')",
                 "for donki_cme in donki_cmes:",
-                f"    donki_cme.profile_type = {donki_defaults.get('profile_type', 'sinusoidal' if solver == 'hydro' else 'square')!r}",
+                f"    donki_cme.profile_type = {donki_defaults.get('profile_type', 'sinusoidal' if solver in {'hydro', 'hydro-pui'} else 'square')!r}",
                 f"    donki_cme.cme_expansion = {bool(donki_defaults.get('cme_expansion', False))}",
                 f"    donki_cme.cme_fixed_duration = {bool(donki_defaults.get('cme_fixed_duration', True))}",
                 f"    donki_cme.fixed_duration = {float(donki_defaults.get('fixed_duration_hr', 12))}*u.hour",

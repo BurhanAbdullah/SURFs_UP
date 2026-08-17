@@ -16,8 +16,9 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
@@ -34,6 +35,7 @@ from surfs_up.core import (
     sample_custom_timeseries,
 )
 from surfs_up.jobs import enqueue, read_status
+from surfs_up.web.insitu_cache import install_insitu_download_cache
 
 _RUNS: OrderedDict[str, object] = OrderedDict()
 _RUNS_LOCK = threading.Lock()
@@ -64,10 +66,12 @@ _PLOT_BODY_CHOICES = (
     ("MARS", "Mars"), ("JUPITER", "Jupiter"), ("SATURN", "Saturn"),
     ("ACE", "ACE"), ("STA", "STEREO-A"), ("STB", "STEREO-B"),
     ("PSP", "Parker Solar Probe"), ("SOLO", "Solar Orbiter"),
-    ("ULYSSES", "Ulysses"),
+    ("ULYSSES", "Ulysses"), ("NEW_HORIZONS", "New Horizons"),
 )
-_URANUS_NAIF_CODE = 799
-_URANUS_NAME = "Uranus"
+_HORIZONS_TARGETS = {
+    "URANUS": (799, "Uranus"),
+    "NEW_HORIZONS": (-98, "New Horizons"),
+}
 _EPHEMERIS_STEP = "12H"
 
 
@@ -256,7 +260,14 @@ def _earth_latitude_at(model_time: datetime.datetime):
 
 
 _AVERAGE_LATITUDE_BODIES = {
-    "Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune"
+    "Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune",
+    "New Horizons",
+}
+_AVERAGE_LATITUDE_SPACECRAFT = {
+    "STEREO-A": "STA",
+    "STEREO-B": "STB",
+    "Parker Solar Probe": "PSP",
+    "Solar Orbiter": "SOLO",
 }
 
 
@@ -269,7 +280,7 @@ def _average_body_latitude(
     from astropy.time import Time
     from sunpy.coordinates.ephemeris import get_body_heliographic_stonyhurst
 
-    if body not in _AVERAGE_LATITUDE_BODIES:
+    if body not in _AVERAGE_LATITUDE_BODIES | set(_AVERAGE_LATITUDE_SPACECRAFT):
         raise ValueError(f"Unsupported body: {body}")
     if not math.isfinite(duration_days) or duration_days <= 0:
         raise ValueError("Run duration must be positive.")
@@ -279,8 +290,34 @@ def _average_body_latitude(
     sample_count = max(2, int(math.ceil(duration_days)) + 1)
     offsets = np.linspace(0.0, duration_days, sample_count)
     times = Time(start) + offsets * u.day
+    if body in _AVERAGE_LATITUDE_SPACECRAFT:
+        from surf.surf import Observer
+
+        coordinates = Observer(_AVERAGE_LATITUDE_SPACECRAFT[body], times)
+        return float(np.mean(coordinates.lat.to_value(u.deg)))
+    if body == "New Horizons":
+        positions = _horizons_positions("NEW_HORIZONS", times[0], times[-1])
+        return float(np.mean(np.rad2deg(positions["lat_rad"])))
     coordinates = get_body_heliographic_stonyhurst(body, times)
     return float(np.mean(coordinates.lat.to_value(u.deg)))
+
+
+def _available_average_latitude_spacecraft(
+    start: datetime.datetime, duration_days: float
+) -> list[str]:
+    """Return spacecraft whose local ephemerides cover the complete model run."""
+    from astropy.time import Time
+    from surf.surf import Observer
+
+    times = Time([start, start + datetime.timedelta(days=duration_days)])
+    available = []
+    for label, observer_code in _AVERAGE_LATITUDE_SPACECRAFT.items():
+        try:
+            Observer(observer_code, times)
+        except (KeyError, OSError, ValueError):
+            continue
+        available.append(label)
+    return available
 
 
 def _body_model_longitude_range(
@@ -307,13 +344,8 @@ def _body_model_longitude_range(
     sample_count = max(2, int(math.ceil(duration_days * 4.0)) + 1)
     offsets = np.linspace(0.0, duration_days, sample_count)
     times = Time(start) + offsets * u.day
-    if body_key == "URANUS":
-        import surf.surf_analysis as surfA
-
-        horizons = surfA.get_horizons_body_for_SURF(
-            times[0], times[-1], step=_EPHEMERIS_STEP,
-            naif_code=_URANUS_NAIF_CODE, body_name=_URANUS_NAME,
-        )
+    if body_key in _HORIZONS_TARGETS:
+        horizons = _horizons_positions(body_key, times[0], times[-1])
         times = Time(horizons["mjd"], format="mjd")
         observer_heeq_lon = np.asarray(horizons["lon_rad"], dtype=float)
         observer_radii = np.asarray(horizons["r_rs"], dtype=float)
@@ -343,20 +375,73 @@ def _body_model_longitude_range(
     return lower % 360.0, upper % 360.0, r_max_rs
 
 
-def _uranus_timeseries(model):
-    """Sample a solved SURF model along Uranus's JPL Horizons trajectory."""
-    import astropy.units as u
+def _horizons_positions(target: str, start, stop):
+    """Fetch one target using the same JPL Horizons adapter used for Uranus."""
+    import surf.surf_analysis as surfA
+
+    target_key = target.strip().upper().replace(" ", "_")
+    naif_code, body_name = _HORIZONS_TARGETS[target_key]
+    return surfA.get_horizons_body_for_SURF(
+        start, stop, step=_EPHEMERIS_STEP,
+        naif_code=naif_code, body_name=body_name,
+    )
+
+
+def _horizons_timeseries(model, target: str):
+    """Sample a solved SURF model along a JPL Horizons trajectory."""
     import surf.surf_analysis as surfA
 
     start = model.time_init
     stop = model.time_init + model.time_out[-1]
-    uranus_pos = surfA.get_horizons_body_for_SURF(
-        start, stop, step=_EPHEMERIS_STEP,
-        naif_code=_URANUS_NAIF_CODE, body_name=_URANUS_NAME,
-    )
+    positions = _horizons_positions(target, start, stop)
     return surfA.get_SURF_at_position_HEEQ(
-        model, uranus_pos["mjd"], uranus_pos["r_rs"], uranus_pos["lon_rad"]
+        model, positions["mjd"], positions["r_rs"], positions["lon_rad"]
     )
+
+
+@contextmanager
+def _horizons_plot_observers(model, surf_analysis, bodies):
+    """Temporarily expose Horizons-only targets to SURF map/movie plotters."""
+    selected = {str(body).upper() for body in bodies or ()}
+    targets = selected & set(_HORIZONS_TARGETS)
+    if not targets:
+        yield
+        return
+    import numpy as np
+    import astropy.units as u
+    from astropy.time import Time
+
+    model_times = Time(model.time_init + model.time_out)
+    observers = {}
+    for target in targets:
+        positions = _horizons_positions(target, model_times[0], model_times[-1])
+        source_times = Time(positions["mjd"], format="mjd")
+        observers[target] = SimpleNamespace(
+            r=np.interp(model_times.jd, source_times.jd, positions["r_rs"]) * u.solRad,
+            lon=(np.interp(
+                model_times.jd, source_times.jd, np.unwrap(positions["lon_rad"])
+            ) % (2 * np.pi)) * u.rad,
+            lat=np.interp(model_times.jd, source_times.jd, positions["lat_rad"]) * u.rad,
+        )
+    original_get_observer = model.get_observer
+    original_styles = surf_analysis.observer_styles
+
+    def get_observer(_model, body):
+        key = str(body).upper().replace(" ", "_")
+        return observers.get(key) or original_get_observer(body)
+
+    def observer_styles():
+        styles = original_styles()
+        styles["NEW_HORIZONS"] = {"marker": "P", "color": "tab:purple"}
+        return styles
+
+    model.get_observer = MethodType(get_observer, model)
+    surf_analysis.observer_styles = observer_styles
+    try:
+        yield
+    finally:
+        del model.get_observer
+        surf_analysis.observer_styles = original_styles
 
 
 def _model_defaults() -> dict[str, object]:
@@ -428,6 +513,12 @@ def _available_plot_body_choices(model):
     outer_radius = model.r[-1]
     available = []
     for value, label in _PLOT_BODY_CHOICES:
+        if value == "NEW_HORIZONS":
+            import astropy.units as u
+
+            if outer_radius > 20 * u.AU:
+                available.append((value, label))
+            continue
         try:
             radii = model.get_observer(value).r.to_value(outer_radius.unit)
         except Exception:
@@ -507,7 +598,7 @@ def _fetch_donki_cmes(
                 "cme_fixed_duration": True,
                 "fixed_duration_hr": 12,
                 "profile_type": (
-                    "sinusoidal" if str(solver).strip().lower() == "hydro" else "square"
+                    "sinusoidal" if str(solver).strip().lower() in {"hydro", "hydro-pui"} else "square"
                 ),
                 "plasma_mode": "Fraction of ambient",
                 "density_fraction": 1,
@@ -681,7 +772,7 @@ def _ambient_preview_figure():
     latitude = _float("latitude", 0.0) * u.deg
     include_bpol = "include_bpol" in request.form
     solver = request.form.get("solver", "huxt").strip().lower()
-    acc_profile = "huxt" if solver == "huxt" else "parker"
+    acc_profile = "huxt" if solver.startswith("huxt") else "parker"
 
     def plot_mas():
         cr_num = int(_float("mas_cr_num", 2000))
@@ -790,7 +881,7 @@ def _ambient_preview_figure():
         v_orig = profile_loader(path, latitude)
         if apply_speed_reduction:
             longitude = np.linspace(0.0, 2.0 * np.pi, len(v_orig), endpoint=False) * u.rad
-            mapper = sin.map_v_inwards if solver == "huxt" else sin.map_v_inwards_parker
+            mapper = sin.map_v_inwards if solver.startswith("huxt") else sin.map_v_inwards_parker
             wsa_reduction = mapper(
                 v_orig,
                 215.0 * u.solRad,
@@ -1142,7 +1233,7 @@ def _request_from_form() -> SimulationRequest:
                 "fixed_duration_hr": _float("donki_fixed_duration_hr", 12.0),
                 "profile_type": request.form.get(
                     "donki_profile_type",
-                    "sinusoidal" if request.form.get("solver") == "hydro" else "square",
+                    "sinusoidal" if request.form.get("solver") in {"hydro", "hydro-pui"} else "square",
                 ),
                 "plasma_mode": request.form.get("donki_plasma_mode", "Fraction of ambient"),
                 "density_fraction": _float("donki_density_fraction", 1.0),
@@ -1173,6 +1264,7 @@ def _request_from_form() -> SimulationRequest:
 
 def create_app(config: dict | None = None) -> Flask:
     """Create an app suitable for local use or a PythonAnywhere WSGI file."""
+    install_insitu_download_cache()
     werkzeug_logger = logging.getLogger("werkzeug")
     if not any(
         isinstance(log_filter, _ProgressPollLogFilter)
@@ -1244,11 +1336,31 @@ def create_app(config: dict | None = None) -> Flask:
                 request.args["datetime"].strip().replace("T", " ")
             )
             duration_days = float(request.args.get("duration", "10"))
-            body = request.args.get("body", "Earth").strip().title()
+            requested_body = request.args.get("body", "Earth").strip()
+            body_lookup = {
+                name.lower(): name
+                for name in _AVERAGE_LATITUDE_BODIES | set(_AVERAGE_LATITUDE_SPACECRAFT)
+            }
+            body = body_lookup.get(requested_body.lower(), requested_body)
             latitude = _average_body_latitude(body, start, duration_days)
         except (KeyError, TypeError, ValueError) as error:
             abort(400, str(error))
         return jsonify({"body": body, "average_latitude": latitude})
+
+    @app.get("/latitude-body-choices")
+    def latitude_body_choices():
+        """Return spacecraft with ephemeris coverage for the requested model interval."""
+        try:
+            start = datetime.datetime.fromisoformat(
+                request.args["datetime"].strip().replace("T", " ")
+            )
+            duration_days = float(request.args.get("duration", "10"))
+            if not math.isfinite(duration_days) or duration_days <= 0:
+                raise ValueError("Run duration must be positive.")
+            spacecraft = _available_average_latitude_spacecraft(start, duration_days)
+        except (KeyError, TypeError, ValueError) as error:
+            abort(400, str(error))
+        return jsonify({"spacecraft": spacecraft})
 
     @app.get("/body-longitude-range")
     def body_longitude_range():
@@ -1463,9 +1575,11 @@ def create_app(config: dict | None = None) -> Flask:
                     options["trace_earth_connection"] = (
                         request.args.get("trace_earth") == "1"
                     )
-                    sa.plot(model, plot_time, **options)
+                    with _horizons_plot_observers(model, sa, options["bodies"]):
+                        sa.plot(model, plot_time, **options)
                 else:
-                    sa.plot_compressible(model, plot_time, **options)
+                    with _horizons_plot_observers(model, sa, options["bodies"]):
+                        sa.plot_compressible(model, plot_time, **options)
             elif kind == "radial":
                 plot_radial_profile(
                     model,
@@ -1513,8 +1627,10 @@ def create_app(config: dict | None = None) -> Flask:
                 else:
                     import numpy as np
 
+                    target_key = observer.upper().replace(" ", "_")
                     series = (
-                        _uranus_timeseries(model) if observer == "Uranus"
+                        _horizons_timeseries(model, target_key)
+                        if target_key in _HORIZONS_TARGETS
                         else sa.get_observer_timeseries(model, observer=observer)
                     )
                     fields = [
@@ -1671,8 +1787,10 @@ def create_app(config: dict | None = None) -> Flask:
             longitude = float(request.args.get("timeseries_lon", 0)) * u.deg
             series = sample_custom_timeseries(model, radius, longitude)
         else:
+            target_key = observer.upper().replace(" ", "_")
             series = (
-                _uranus_timeseries(model) if observer == "Uranus"
+                _horizons_timeseries(model, target_key)
+                if target_key in _HORIZONS_TARGETS
                 else sa.get_observer_timeseries(model, observer=observer)
             )
 
@@ -1698,6 +1816,11 @@ def create_app(config: dict | None = None) -> Flask:
         ).rename(columns={time_column: "time"})
         if time_column == "time":
             surf_frame["time"] = pd.to_datetime(surf_frame["time"])
+        else:
+            surf_frame["time"] = (
+                pd.Timestamp(model.time_init)
+                + pd.to_timedelta(surf_frame["time"], unit="D")
+            )
 
         observation_sources = {
             "Earth": ("get_omni", "OMNI"),
@@ -1744,6 +1867,11 @@ def create_app(config: dict | None = None) -> Flask:
                     exc_info=True,
                 )
 
+        # Serialize timestamps ourselves because pandas' CSV default uses a
+        # space separator rather than the ISO 8601 ``T`` separator.
+        surf_frame["time"] = surf_frame["time"].map(
+            lambda value: "" if pd.isna(value) else pd.Timestamp(value).isoformat()
+        )
         csv_text = surf_frame.to_csv(index=False)
         payload = io.BytesIO(csv_text.encode("utf-8"))
         return send_file(
@@ -1812,7 +1940,8 @@ def create_app(config: dict | None = None) -> Flask:
                     original_plot_compressible
                 )
             try:
-                saved = animation(model, **supported_options)
+                with _horizons_plot_observers(model, sa, options["bodies"]):
+                    saved = animation(model, **supported_options)
             finally:
                 if original_plot_compressible is not None:
                     sa.plot_compressible = original_plot_compressible
@@ -1841,8 +1970,20 @@ def create_app(config: dict | None = None) -> Flask:
 
 
 def main() -> None:
-    """Run the development server."""
-    create_app().run(debug=True)
+    """Run the development server with its local background worker."""
+    from surfs_up.jobs import cancel_all_unfinished_jobs, run_worker
+
+    # A prior local process cannot still be doing useful work after it has
+    # exited. Do not replay its abandoned queue before the user presses Run.
+    cancel_all_unfinished_jobs()
+    threading.Thread(
+        target=run_worker,
+        daemon=True,
+        name="surfs-up-worker",
+    ).start()
+    # Disabling Werkzeug's process reloader prevents it from starting a second
+    # worker and racing for the same filesystem queue.
+    create_app().run(debug=True, use_reloader=False)
 
 
 if __name__ == "__main__":

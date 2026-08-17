@@ -200,13 +200,21 @@
     <fieldset class="group-box">
       <legend class="group-title px-1">Model Parameters</legend>
       <div class="grid gap-4">
-        <div class="grid items-end gap-3 lg:grid-cols-[minmax(14rem,2fr)_auto_minmax(7rem,1fr)_auto_minmax(10rem,1fr)]">
+        <div class="grid items-end gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]">
           <div class="grid gap-1.5">
-            <span class="whitespace-nowrap text-sm font-medium text-slate-700">Model start date (default: 5 days prior to forecast date, to allow CME propagation)</span>
+            <span class="text-sm font-medium text-slate-700">Model start date (default: 5 days prior to forecast date, to allow CME propagation)</span>
             <label><span class="sr-only">Model start date</span>
               <input class="model-start-input" name="start_datetime" id="model-start-datetime" type="datetime-local" step="1" value="{{ default_start }}">
             </label>
           </div>
+          <label class="grid gap-1.5"><span class="text-sm font-medium text-slate-700">Run end date</span>
+            <input id="model-end-datetime" type="datetime-local" step="1">
+          </label>
+          <label class="grid gap-1.5"><span class="text-sm font-medium text-slate-700">Run time (days)</span>
+            <input name="simtime_days" id="model-simtime-days" type="number" min="0.1" step="0.1" value="10">
+          </label>
+        </div>
+        <div class="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[auto_minmax(7rem,1fr)_auto_minmax(10rem,1fr)_auto_minmax(10rem,1fr)_minmax(12rem,auto)]">
           <span class="pb-2 text-sm font-medium text-slate-600">CR</span>
           <label><span class="sr-only">Carrington rotation</span>
             <input name="cr_num" id="model-cr-number" type="number" value="{{ default_cr_num }}">
@@ -215,15 +223,9 @@
           <label><span class="sr-only">Earth Carrington longitude in degrees</span>
             <input name="cr_lon_init_deg" id="model-cr-longitude" type="number" step="0.1" value="{{ '%.1f'|format(default_cr_lon) }}">
           </label>
-        </div>
-        <div class="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[auto_minmax(7rem,1fr)_auto_minmax(10rem,1fr)_minmax(12rem,auto)]">
-          <span class="pb-2 text-sm font-medium text-slate-600">Run time (days)</span>
-          <label><span class="sr-only">Run time in days</span>
-            <input name="simtime_days" type="number" step="0.1" value="10">
-          </label>
           <span class="pb-2 text-sm font-medium text-slate-600">Solver</span>
           <label><span class="sr-only">Solver</span>
-            <select name="solver"><option value="huxt">HUXt</option><option>hydro</option><option>hydro-pcm</option></select>
+            <select name="solver"><option value="huxt">HUXt</option><option value="hydro">hydro</option><option value="huxt-pui">HUXt + PUI</option><option value="hydro-pui">hydro + PUI</option></select>
           </label>
           <label class="pb-2"><span><input name="include_bpol" type="checkbox"> Include B polarity</span></label>
         </div>
@@ -235,7 +237,8 @@
         <label class="grid gap-1.5"><span class="whitespace-nowrap text-sm font-medium text-slate-700">Model latitude</span><input class="w-full min-w-0" name="latitude" id="model-latitude" type="number" step="0.1" value="{{ '%.2f'|format(default_latitude) }}"></label>
         <label class="pb-2"><span><input name="average_body_latitude" id="average-body-latitude" type="checkbox" checked> Use average latitude of body</span></label>
         <label class="grid gap-1.5"><span class="text-sm font-medium text-slate-700">Body</span><select name="latitude_body" id="latitude-body">
-          {% for body in ["Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune"] %}<option{% if body == "Earth" %} selected{% endif %}>{{ body }}</option>{% endfor %}
+          {% for body in ["Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "New Horizons"] %}<option{% if body == "Earth" %} selected{% endif %}>{{ body }}</option>{% endfor %}
+          {% for body in ["STEREO-A", "STEREO-B", "Parker Solar Probe", "Solar Orbiter"] %}<option data-spacecraft="true" disabled>{{ body }}</option>{% endfor %}
         </select></label>
         <label class="grid gap-1.5"><span class="text-sm font-medium text-slate-700">Frame</span><select name="frame"><option value="synodic">Synodic (recommended for 1D runs)</option><option value="sidereal">Sidereal (recommended for 2D runs)</option></select></label>
       </div>
@@ -245,7 +248,7 @@
           <div class="grid items-end gap-3 sm:grid-cols-[auto_minmax(10rem,1fr)]">
             <label class="pb-2"><span><input name="clamp_longitude_to_body" id="clamp-longitude-to-body" type="checkbox"> Clamp longitude to body</span></label>
             <label class="grid gap-1.5 opacity-50" id="clamp-longitude-body-label"><span class="text-sm font-medium text-slate-700">Body</span><select name="clamp_longitude_body" id="clamp-longitude-body" disabled>
-              {% for value, label in [("Earth","Earth"),("Mercury","Mercury"),("Venus","Venus"),("Mars","Mars"),("Jupiter","Jupiter"),("Saturn","Saturn"),("Uranus","Uranus"),("PSP","Parker Solar Probe"),("SOLO","Solar Orbiter"),("STA","STEREO-A"),("STB","STEREO-B"),("ULYSSES","Ulysses")] %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+              {% for value, label in [("Earth","Earth"),("Mercury","Mercury"),("Venus","Venus"),("Mars","Mars"),("Jupiter","Jupiter"),("Saturn","Saturn"),("Uranus","Uranus"),("NEW_HORIZONS","New Horizons"),("PSP","Parker Solar Probe"),("SOLO","Solar Orbiter"),("STA","STEREO-A"),("STB","STEREO-B"),("ULYSSES","Ulysses")] %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
             </select></label>
           </div>
         </div>
@@ -605,6 +608,7 @@
                   ("PSP","Parker Solar Probe"),("SOLO","Solar Orbiter"),("STA","STEREO-A"),
                   ("STB","STEREO-B"),("ULYSSES","Ulysses"),("custom","Custom coordinates")] %}
                 <option value="{{ value }}">{{ label }}</option>{% endfor %}
+                {% if ("NEW_HORIZONS", "New Horizons") in plot_body_choices %}<option value="New Horizons">New Horizons</option>{% endif %}
               </select>
               <label id="timeseries-insitu-option"><span><input id="timeseries-plot-omni" type="checkbox" checked> <span id="timeseries-insitu-label">Plot observations</span></span></label>
             </div>
@@ -1233,15 +1237,18 @@
         const lines = [
           "# Sample the moving observer and plot the available model variables.",
         ];
-        if (observer === "Uranus") {
+        if (observer === "Uranus" || observer === "New Horizons") {
+          const horizons = observer === "Uranus"
+            ? {variable: "uranus_pos", code: 799, name: "Uranus"}
+            : {variable: "new_horizons_pos", code: -98, name: "New Horizons"};
           lines.push(
             "t_start_astro = model.time_init",
             "t_stop_astro = model.time_init + model.time_out[-1]",
-            "uranus_pos = sa.get_horizons_body_for_SURF(",
-            "    t_start_astro, t_stop_astro, step='12H', naif_code=799, body_name='Uranus'",
+            `${horizons.variable} = sa.get_horizons_body_for_SURF(`,
+            `    t_start_astro, t_stop_astro, step='12H', naif_code=${horizons.code}, body_name='${horizons.name}'`,
             ")",
             "time_series = sa.get_SURF_at_position_HEEQ(",
-            "    model, uranus_pos['mjd'], uranus_pos['r_rs'], uranus_pos['lon_rad']",
+            `    model, ${horizons.variable}['mjd'], ${horizons.variable}['r_rs'], ${horizons.variable}['lon_rad']`,
             ")",
           );
         } else {
@@ -2034,6 +2041,7 @@
     });
 
     const modelStartInput = document.getElementById("model-start-datetime");
+    const modelEndInput = document.getElementById("model-end-datetime");
     const omniForecastDatetime = document.getElementById("omni-forecast-datetime");
     const insituMode = document.getElementById("insitu-mode");
     const insituSpacecraft = document.getElementById("insitu-spacecraft");
@@ -2061,6 +2069,27 @@
     function utcInputDate(input) {
       return new Date(`${input.value}Z`);
     }
+    function syncModelEndFromDuration() {
+      const start = utcInputDate(modelStartInput);
+      const runDays = Number(simulationDuration.value);
+      if (!Number.isFinite(start.getTime()) || !Number.isFinite(runDays) || runDays <= 0) return;
+      modelEndInput.value = new Date(start.getTime() + runDays * 86400000)
+        .toISOString().slice(0, 19);
+      modelEndInput.setCustomValidity("");
+    }
+    function syncDurationFromModelEnd() {
+      const start = utcInputDate(modelStartInput);
+      const end = utcInputDate(modelEndInput);
+      const runDays = (end - start) / 86400000;
+      if (!Number.isFinite(runDays) || runDays <= 0) {
+        modelEndInput.setCustomValidity("Run end date must be after the model start date.");
+        modelEndInput.reportValidity();
+        return;
+      }
+      modelEndInput.setCustomValidity("");
+      simulationDuration.value = runDays.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+      simulationDuration.dispatchEvent(new Event("change", {bubbles: true}));
+    }
     function syncCmeDatetimeFromDay() {
       const launch = utcInputDate(modelStartInput);
       launch.setTime(launch.getTime() + Number(cmeLaunchDay.value) * 86400000);
@@ -2084,6 +2113,14 @@
       const forecast = utcInputDate(modelStartInput);
       forecast.setUTCDate(forecast.getUTCDate() + 5);
       omniForecastDatetime.value = forecast.toISOString().slice(0, 19);
+    }
+    function syncModelStartFromOmniForecastTime() {
+      if (!omniForecastDatetime?.value) return;
+      const modelStart = utcInputDate(omniForecastDatetime);
+      if (!Number.isFinite(modelStart.getTime())) return;
+      modelStart.setUTCDate(modelStart.getUTCDate() - 5);
+      modelStartInput.value = modelStart.toISOString().slice(0, 19);
+      modelStartInput.dispatchEvent(new Event("change", {bubbles: true}));
     }
     let insituSpacecraftManuallySelected = restoredPreRunConfiguration;
     function syncDefaultInsituSpacecraft() {
@@ -2203,6 +2240,7 @@
       if (!response.ok) throw new Error(await response.text());
       const coordinates = await response.json();
       modelStartInput.value = coordinates.datetime;
+      syncModelEndFromDuration();
       modelCrNumber.value = coordinates.cr_num;
       modelCrLongitude.value = coordinates.cr_lon.toFixed(2);
       if (!averageBodyLatitude.checked) {
@@ -2217,11 +2255,26 @@
       await updateBodyLongitudeRange();
     }
     let averageLatitudeRequest = 0;
+    async function updateLatitudeBodyChoices() {
+      if (!modelStartInput.value || !(Number(simulationDuration.value) > 0)) return;
+      const parameters = new URLSearchParams({
+        datetime: modelStartInput.value,
+        duration: simulationDuration.value
+      });
+      const response = await fetch(`{{ url_for("latitude_body_choices") }}?${parameters}`);
+      if (!response.ok) throw new Error(await response.text());
+      const available = new Set((await response.json()).spacecraft || []);
+      latitudeBody.querySelectorAll('option[data-spacecraft="true"]').forEach(option => {
+        option.disabled = !available.has(option.value);
+      });
+      if (latitudeBody.selectedOptions[0]?.disabled) latitudeBody.value = "Earth";
+    }
     async function updateAverageBodyLatitude() {
       const enabled = averageBodyLatitude.checked;
       latitudeBody.disabled = !enabled;
       if (!enabled || !modelStartInput.value || !(Number(simulationDuration.value) > 0)) return;
       const requestNumber = ++averageLatitudeRequest;
+      await updateLatitudeBodyChoices();
       const parameters = new URLSearchParams({
         datetime: modelStartInput.value,
         duration: simulationDuration.value,
@@ -2243,12 +2296,14 @@
         "Model start time changed; reload or recreate the CME list.";
     }
     modelStartInput.addEventListener("change", () => {
+      syncModelEndFromDuration();
       clearCmesForStartTimeChange();
       syncOmniForecastTime();
       syncDefaultInsituSpacecraft();
       updateCoordinates({datetime: modelStartInput.value}).catch(console.error);
     });
     modelStartInput.addEventListener("input", () => {
+      syncModelEndFromDuration();
       syncOmniForecastTime();
       syncDefaultInsituSpacecraft();
     });
@@ -2256,6 +2311,9 @@
     averageBodyLatitude.addEventListener("change", () => updateAverageBodyLatitude().catch(console.error));
     latitudeBody.addEventListener("change", () => updateAverageBodyLatitude().catch(console.error));
     simulationDuration.addEventListener("change", () => updateAverageBodyLatitude().catch(console.error));
+    simulationDuration.addEventListener("input", syncModelEndFromDuration);
+    modelEndInput.addEventListener("change", syncDurationFromModelEnd);
+    syncModelEndFromDuration();
     modelLatitude.addEventListener("input", event => {
       if (event.isTrusted && averageBodyLatitude.checked) {
         averageBodyLatitude.checked = false;
@@ -2278,6 +2336,7 @@
       insituMode.addEventListener("change", syncOmniForecastTimeState);
       syncOmniForecastTimeState();
     }
+    omniForecastDatetime?.addEventListener("change", syncModelStartFromOmniForecastTime);
     if (iswaUseModelStart) {
       iswaUseModelStart.addEventListener("change", syncIswaMapDateState);
       iswaMapDate.addEventListener("change", syncModelStartFromIswaMapDate);
@@ -2557,7 +2616,7 @@
         frameSelect.value = oneDimensionalToggle.checked ? "synodic" : "sidereal";
       }
       if (modelGammaRow && modelGammaInput) {
-        const gammaEnabled = solverSelect.value !== "huxt";
+        const gammaEnabled = !solverSelect.value.startsWith("huxt");
         modelGammaInput.disabled = !gammaEnabled;
         modelGammaRow.classList.toggle("hidden", !gammaEnabled);
       }
@@ -2565,9 +2624,9 @@
       const fieldSelect = document.getElementById("movie-ts-field");
       if (fieldSelect) {
         [...fieldSelect.options].forEach(option => {
-          option.disabled = solverSelect.value === "huxt" && option.value !== "V";
+          option.disabled = solverSelect.value.startsWith("huxt") && option.value !== "V";
         });
-        if (solverSelect.value === "huxt") fieldSelect.value = "V";
+        if (solverSelect.value.startsWith("huxt")) fieldSelect.value = "V";
       }
       syncMovieHcsControls();
     }
@@ -2592,7 +2651,7 @@
     solverSelect.addEventListener("change", () => {
       syncModelDependentControls();
       document.getElementById("donki-profile").value =
-        document.querySelector('[name="solver"]').value === "hydro"
+        ["hydro", "hydro-pui"].includes(document.querySelector('[name="solver"]').value)
           ? "sinusoidal" : "square";
       applyDefaultsToAllCmes();
     });

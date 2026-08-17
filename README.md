@@ -27,11 +27,10 @@ The Flask workflow supports user-specified, MAS, WSA, CorTom, OMNI-backmapped,
 and OMNI-outwards ambient boundaries, plus magnetic boundaries, streak lines,
 and JSON-defined Cone CMEs.
 
-Open `http://127.0.0.1:5000`. Start the background worker in a second terminal:
-
-```powershell
-surfs-up-worker
-```
+Open `http://127.0.0.1:5000`. The local launcher starts the background worker
+in the same process. The standalone `surfs-up-worker` command is intended for
+WSGI deployments such as PythonAnywhere, where the web server is managed
+separately.
 
 The web form queues model runs and polls their persistent status. Completed
 models can produce 2D maps, radial profiles, time series, and downloadable MP4
