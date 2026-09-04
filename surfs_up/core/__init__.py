@@ -9,13 +9,16 @@ from .plotting import (
     timeseries_figsize,
 )
 from .codegen import build_generated_code, build_uniform_boundary_code
+from .regression import RegressionResult, compare_arrays
 from .runner import RunResult, run_generated_code
 
 __all__ = [
+    "RegressionResult",
     "RunResult",
     "SimulationRequest",
     "build_generated_code",
     "build_uniform_boundary_code",
+    "compare_arrays",
     "format_datetime_axis_like_surf",
     "plot_custom_timeseries",
     "plot_radial",
