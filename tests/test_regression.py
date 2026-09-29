@@ -62,3 +62,18 @@ def test_negative_tolerances_are_rejected():
         compare_arrays([1.0], [1.0], rtol=-1e-6)
     with pytest.raises(ValueError):
         compare_arrays([1.0], [1.0], atol=-1e-9)
+
+
+def test_nonfinite_values_are_reported_even_when_positions_match(): 
+    result = compare_arrays([np.inf], [np.inf], name="state")
+    assert result.passed is False
+    assert result.max_abs_error == np.inf
+    assert result.max_relative_error == np.inf
+    assert result.rms_error == np.inf
+    assert "non-finite" in result.message
+
+
+def test_matching_negative_infinity_is_not_treated_as_valid_equivalence():
+    result = compare_arrays([-np.inf], [-np.inf], name="state")
+    assert result.passed is False
+    assert "non-finite" in result.message
