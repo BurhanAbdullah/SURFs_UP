@@ -36,9 +36,10 @@ def compare_arrays(
     """Compare two numerical outputs with absolute and relative tolerances.
 
     ``numpy.allclose`` determines pass/fail, while the returned diagnostics
-    make a failed scientific regression actionable.  Non-finite values are
-    rejected unless they occur in exactly the same position and are both NaN.
-    Shape mismatches are reported without attempting implicit broadcasting.
+    make a failed scientific regression actionable.  Matching NaNs are
+    accepted as equivalent missing values; infinities and all other
+    non-finite mismatches are rejected. Shape mismatches are reported without
+    attempting implicit broadcasting.
     """
     if rtol < 0 or atol < 0:
         raise ValueError("rtol and atol must be non-negative")
